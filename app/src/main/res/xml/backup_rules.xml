@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Project Kaka deliberately keeps data on-device; only allow the DB + WebP store to travel via user-initiated device transfer. -->
+<full-backup-content>
+    <include domain="database" path="kaka_inventory.db" />
+    <include domain="file" path="kaka_webp_store" />
+</full-backup-content>
