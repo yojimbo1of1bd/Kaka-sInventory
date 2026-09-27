@@ -51,8 +51,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.projectkaka.inventory.data.local.entity.CategoryType
-import com.projectkaka.inventory.search.MagicInputParser
-import com.projectkaka.inventory.search.ParseResult
+import com.projectkaka.inventory.search.TerminalResult
 
 data class TerminalLine(
     val text: String,
@@ -95,75 +94,27 @@ fun AliasGuideScreen(
         // Echo the command
         terminalLines.add(TerminalLine("$ $trimmed", Color(0xFF58A6FF), isBold = true))
 
-        val accAliases = state.accounts.flatMap { listOf(it.name) + it.aliases.split(",").map { a -> a.trim() } }.filter { it.isNotBlank() }.map { it.lowercase() }.toSet()
-        val catAliases = state.categories.flatMap { listOf(it.name) + it.aliases.split(",").map { a -> a.trim() } }.filter { it.isNotBlank() }.map { it.lowercase() }.toSet()
-        val result = MagicInputParser.parse(trimmed, accAliases, catAliases)
-        
-        when (result) {
-            is ParseResult.Financial -> {
-                val cmd = result.command
-                val dir = if (cmd.isCredit) "+" else "-"
-                terminalLines.add(TerminalLine(
-                    "Executing: ${dir}৳${cmd.amount} ${cmd.accountToken ?: "Cash"} → ${cmd.categoryToken ?: "Uncategorized"}...",
-                    Color(0xFFFFBD2E)
-                ))
-                viewModel.executeFinancialCommand(cmd) { msg, success ->
-                    terminalLines.add(TerminalLine(
-                        msg,
-                        if (success) Color(0xFF39D353) else Color(0xFFFF7B72)
-                    ))
+        viewModel.executeTerminalCommand(trimmed) { result ->
+            when (result) {
+                is TerminalResult.Success -> {
+                    terminalLines.add(TerminalLine("✓ ${result.message}", Color(0xFF39D353)))
                 }
-            }
-            is ParseResult.InitAccount -> {
-                viewModel.initializeAccountBalance(result.accountAlias, result.amount)
-                terminalLines.add(TerminalLine(
-                    "✓ Initialized ${result.accountAlias} to ৳${result.amount}",
-                    Color(0xFF39D353)
-                ))
-            }
-            is ParseResult.AlterAccount -> {
-                viewModel.alterAccount(result.accountAlias, result.newName)
-                terminalLines.add(TerminalLine(
-                    "✓ Renaming ${result.accountAlias} → ${result.newName}",
-                    Color(0xFF39D353)
-                ))
-            }
-            is ParseResult.DeleteAccount -> {
-                viewModel.deleteAccount(result.accountAlias)
-                terminalLines.add(TerminalLine(
-                    "✓ Deleting account: ${result.accountAlias}",
-                    Color(0xFFFF5F56)
-                ))
-            }
-            is ParseResult.Action -> {
-                when (result.actionType) {
-                    "show_alias" -> showManual = true
-                    "show_graph" -> terminalLines.add(TerminalLine(
-                        "→ Use this command in the main search bar to navigate.",
-                        Color(0xFFFFBD2E)
-                    ))
-                    "ledger" -> terminalLines.add(TerminalLine(
-                        "→ Use this command in the main search bar to navigate.",
-                        Color(0xFFFFBD2E)
-                    ))
-                    "export" -> terminalLines.add(TerminalLine(
-                        "→ Use this command in the main search bar to navigate.",
-                        Color(0xFFFFBD2E)
-                    ))
-                    else -> terminalLines.add(TerminalLine(
-                        "Action: ${result.actionType}",
-                        Color(0xFF58A6FF)
-                    ))
+                is TerminalResult.Failure -> {
+                    terminalLines.add(TerminalLine("✗ ${result.reason}", Color(0xFFFF7B72)))
+                    if (result.hint != null) {
+                        terminalLines.add(TerminalLine("  Hint: ${result.hint}", Color(0xFF8A8A8A)))
+                    }
                 }
-            }
-            is ParseResult.Error -> {
-                terminalLines.add(TerminalLine("✗ ${result.message}", Color(0xFFFF5F56)))
-            }
-            is ParseResult.Success -> {
-                terminalLines.add(TerminalLine(
-                    "→ Search query executed. Use the main search bar for inventory search.",
-                    Color(0xFFFFBD2E)
-                ))
+                is TerminalResult.NeedsInput -> {
+                    terminalLines.add(TerminalLine("? ${result.question}", Color(0xFFFFBD2E)))
+                }
+                is TerminalResult.Pending -> {
+                    // Mostly for action commands handled by the router/nav, but for now just output:
+                    if (trimmed.startsWith("kaka ")) {
+                        terminalLines.add(TerminalLine("→ Action requested. Wait, action commands need a NavHost mapping here.", Color(0xFFFFBD2E)))
+                        if (trimmed.contains("show alias")) showManual = true
+                    }
+                }
             }
         }
     }

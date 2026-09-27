@@ -26,7 +26,7 @@ import com.projectkaka.inventory.data.local.entity.TransactionEntity
         TransactionEntity::class,
         LedgerEntryEntity::class
     ],
-    version = 5,
+    version = 7,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -51,7 +51,14 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     // Fast sequential writes for burst photo ingestion.
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addCallback(object : Callback() {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            super.onCreate(db)
+                            // Fresh installs get everything directly into the v6 schema.
+                            DatabaseSeeder.seedV6(db)
+                        }
+                    })
                     .build()
                     .also { INSTANCE = it }
             }
@@ -219,6 +226,27 @@ abstract class AppDatabase : RoomDatabase() {
                         COALESCE((SELECT SUM(`amount`) FROM `financial_transactions` WHERE `account_id` = `accounts`.`id` AND `is_credit` = 0), 0)
                     """.trimIndent()
                 )
+            }
+        }
+
+        /**
+         * v5 → v6: Phase 3 Account Management defaults.
+         * Ensures Assets, Liabilities, Capital, and Cash exist idempotently.
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                DatabaseSeeder.seedPhase3Defaults(db)
+            }
+        }
+
+        /**
+         * v6 → v7: Phase 4 Ledger Contacts
+         * Adds 'aliases' column to ledger_entries and backfills it with lowercase contact_name.
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `ledger_entries` ADD COLUMN `aliases` TEXT NOT NULL DEFAULT ''")
+                db.execSQL("UPDATE `ledger_entries` SET `aliases` = LOWER(TRIM(`contact_name`))")
             }
         }
     }

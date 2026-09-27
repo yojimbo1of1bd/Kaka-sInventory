@@ -37,10 +37,6 @@ data class FinancialCategoryEntity(
 ) {
     /** Returns true if [input] (lowercased) matches the name or any alias. */
     fun matchesInput(input: String): Boolean {
-        val lower = input.lowercase().trim()
-        if (name.lowercase() == lower) return true
-        return aliases.split(",")
-            .map { it.trim().lowercase() }
-            .any { it.isNotEmpty() && it == lower }
+        return com.projectkaka.inventory.util.SearchHelper.matchesAlias(input, name, aliases)
     }
 }

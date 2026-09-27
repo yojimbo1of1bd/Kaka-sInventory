@@ -5,6 +5,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -74,6 +77,7 @@ fun KakaApp() {
         ThemeMode.DARK -> true
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
+    val coroutineScope = rememberCoroutineScope()
 
     // The theme reads the persisted flag, so an appearance change repaints the whole tree
     // instantly and survives process death.
@@ -131,11 +135,13 @@ fun KakaApp() {
                     appLockEnabled = appLockEnabled,
                     onAppLockChange = { preferences.setAppLockEnabled(it) },
                     isPinSet = appPin.isNotEmpty() || appPinHash.isNotEmpty(),
-                    onAppPinChange = { 
-                        val salt = com.projectkaka.inventory.util.CryptoUtils.generateSalt()
-                        val hash = com.projectkaka.inventory.util.CryptoUtils.hashPin(it, salt, 100000)
-                        preferences.setAppPinHash(hash, salt, 100000)
-                        preferences.clearPlaintextAppPin()
+                    onAppPinChange = { pin ->
+                        coroutineScope.launch(Dispatchers.Default) {
+                            val salt = com.projectkaka.inventory.util.CryptoUtils.generateSalt()
+                            val hash = com.projectkaka.inventory.util.CryptoUtils.hashPin(pin, salt, 100000)
+                            preferences.setAppPinHash(hash, salt, 100000)
+                            preferences.clearPlaintextAppPin()
+                        }
                     },
                     showQuickLog = showQuickLog,
                     onShowQuickLogChange = { preferences.setShowQuickLog(it) },

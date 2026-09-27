@@ -27,11 +27,17 @@ class FinanceRepositoryImpl(
     override fun getAllAccounts(): Flow<List<AccountEntity>> =
         financeDao.getAllAccounts()
 
+    override fun observeAccountsWithCounts(): Flow<List<com.projectkaka.inventory.data.local.dao.AccountWithCounts>> =
+        financeDao.observeAccountsWithCounts()
+
     override fun getActiveAccounts(): Flow<List<AccountEntity>> =
         financeDao.getActiveAccounts()
 
     override suspend fun getActiveAccountsSnapshot(): List<AccountEntity> =
         withContext(ioDispatcher) { financeDao.getActiveAccountsSnapshot() }
+        
+    override suspend fun getAllAccountsSnapshot(): List<AccountEntity> =
+        withContext(ioDispatcher) { financeDao.getAllAccountsSnapshot() }
 
     override fun observeAllAccountBalances(): Flow<List<AccountEntity>> =
         financeDao.observeAllAccountBalances()
@@ -43,10 +49,21 @@ class FinanceRepositoryImpl(
         withContext(ioDispatcher) { financeDao.getAccountBalance(accountId) }
 
     override suspend fun insertAccount(account: AccountEntity): Long =
-        withContext(ioDispatcher) { financeDao.insertAccount(account) }
+        withContext(ioDispatcher) { 
+            db.withTransaction {
+                val id = financeDao.insertAccount(account)
+                financeDao.recalculateAccountBalance(id.toInt())
+                id
+            }
+        }
 
     override suspend fun updateAccount(account: AccountEntity) =
-        withContext(ioDispatcher) { financeDao.updateAccount(account) }
+        withContext(ioDispatcher) { 
+            db.withTransaction {
+                financeDao.updateAccount(account)
+                financeDao.recalculateAccountBalance(account.id)
+            }
+        }
 
     override suspend fun deleteAccount(account: AccountEntity) =
         withContext(ioDispatcher) { financeDao.deleteAccount(account) }
@@ -230,15 +247,16 @@ class FinanceRepositoryImpl(
     override fun observeContactSummaries(): Flow<List<ContactSummaryRow>> =
         financeDao.observeContactSummaries()
 
-    override suspend fun searchLedgerEntries(
-        contactName: String?,
+    override fun searchLedgerEntries(
+        contactQuery: String?,
         isSettled: Boolean?,
         minAmount: Long?,
         maxAmount: Long?,
         minDate: Long?,
         maxDate: Long?
-    ): List<LedgerEntryEntity> = withContext(ioDispatcher) {
-        financeDao.searchLedgerEntries(contactName, isSettled, minAmount, maxAmount, minDate, maxDate)
+    ): kotlinx.coroutines.flow.Flow<List<LedgerEntryEntity>> {
+        val query = contactQuery?.let { "%${com.projectkaka.inventory.util.SearchHelper.escapeLike(it)}%" }
+        return financeDao.searchLedgerEntries(query, isSettled, minAmount, maxAmount, minDate, maxDate)
     }
 
     override suspend fun issueDebt(

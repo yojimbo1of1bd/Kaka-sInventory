@@ -42,7 +42,7 @@ with full care-task management, and CSV/JSON export to local app storage.
 
 ## Phase 9 & 10 — Lifecycle Correctness & Consistency
 - Lifecycle correctness in MainActivity.
-- Full round-trip testing for Schema migrations (V1 -> V2 -> V3).
+- Full round-trip testing for Schema migrations (V1 -> V2 -> V3 -> V4 -> V5).
 - Strict minor-unit money arithmetic and unified image storage paths.
 - Backup configuration limits to `.db` and `kaka_webp_store`.
 
@@ -71,7 +71,7 @@ with full care-task management, and CSV/JSON export to local app storage.
 - **Export**: download icon -> Export CSV / JSON.
 
 ## Why this is genuinely offline and secure
-- `AndroidManifest.xml` declares **no** `INTERNET` permission. (Permissions exist only for Camera, Biometrics, and basic OS integrations, all gated).
+- `AndroidManifest.xml` declares **no** `INTERNET` permission. (Permissions exist only for Camera, Biometrics, and Contacts, and are individually gated).
 - Cloud backup is excluded in `data_extraction_rules.xml`; only device-to-device transfer carries `kaka_inventory.db` and `kaka_webp_store/`.
 - Coil only ever renders local `File` paths. Exports and preferences are app-private files.
 - App state = one `.db` file + one image folder + one export folder + one prefs XML, all sandboxed.

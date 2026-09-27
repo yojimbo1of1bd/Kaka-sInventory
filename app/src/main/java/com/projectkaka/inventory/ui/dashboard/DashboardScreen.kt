@@ -86,7 +86,6 @@ fun DashboardScreen(
     viewModel: DashboardViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val pendingAction by viewModel.pendingAction.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // ── Username prompt on first launch ──
@@ -102,7 +101,7 @@ fun DashboardScreen(
             
             if (alertsEnabled) {
                 if (!permSmsCalls) {
-                    android.widget.Toast.makeText(context, "Emergency alert blocked: SMS & Calls permission disabled in Settings", android.widget.Toast.LENGTH_LONG).show()
+                    android.widget.Toast.makeText(context, "Emergency alert blocked: SMS & Calls disabled. Enable in Settings -> Privacy.", android.widget.Toast.LENGTH_LONG).show()
                 } else {
                     val phone = app.preferences.emergencyContactNumber.value.replace(Regex("[^0-9+]"), "")
                     val formattedPhone = if (phone.startsWith("0")) "+88$phone" else phone
@@ -146,14 +145,7 @@ fun DashboardScreen(
         }
     }
 
-    LaunchedEffect(pendingAction) {
-        when (pendingAction) {
-            "show_graph" -> { onOpenGraph(); viewModel.clearAction() }
-            "show_alias" -> { onOpenAlias(); viewModel.clearAction() }
-            "ledger" -> { onOpenLedger(); viewModel.clearAction() }
-            "export" -> { onOpenExport(); viewModel.clearAction() }
-        }
-    }
+
 
     var pendingLiquidation by remember { mutableStateOf<ItemEntity?>(null) }
     var pendingCareTask by remember { mutableStateOf<ItemEntity?>(null) }
@@ -335,26 +327,7 @@ fun DashboardScreen(
                 }
             }
             
-            // ── Transaction Success Message ──
-            if (state.lastTransactionMessage != null) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                ) {
-                    Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = state.lastTransactionMessage!!,
-                            modifier = Modifier.weight(1f),
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        IconButton(onClick = { viewModel.clearTransactionMessage() }) {
-                            Icon(Icons.Default.Close, "Clear", tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                        }
-                    }
-                }
-            }
+
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
@@ -384,12 +357,16 @@ fun DashboardScreen(
                     onLogDebit = { note, acc, cat -> 
                         val amount = note.split(" ").firstOrNull()?.toDoubleOrNull() ?: 0.0
                         val text = note.substringAfter(" ", missingDelimiterValue = "")
-                        viewModel.onQueryChange("f/ -$amount $acc $cat $text")
+                        viewModel.executeTerminalCommand("f/ -$amount $acc $cat $text") { msg ->
+                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     },
                     onLogCredit = { note, acc, cat ->
                         val amount = note.split(" ").firstOrNull()?.toDoubleOrNull() ?: 0.0
                         val text = note.substringAfter(" ", missingDelimiterValue = "")
-                        viewModel.onQueryChange("f/ +$amount $acc $cat $text")
+                        viewModel.executeTerminalCommand("f/ +$amount $acc $cat $text") { msg ->
+                            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     },
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
@@ -457,48 +434,7 @@ fun DashboardScreen(
     }
 }
 
-    // ── Financial Transaction Confirmation ──
-    state.pendingTransaction?.let { tx ->
-        AlertDialog(
-            onDismissRequest = { viewModel.cancelTransaction() },
-            title = { 
-                Text(
-                    text = "Confirm Transaction",
-                    fontWeight = FontWeight.Black,
-                    color = MaterialTheme.colorScheme.primary
-                ) 
-            },
-            text = {
-                val direction = if (tx.isCredit) "Income to" else "Expense from"
-                Column {
-                    Text(
-                        text = "৳${"%.2f".format(tx.amount.minorUnits / 100.0)}",
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Black,
-                        color = if (tx.isCredit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text("$direction: ${tx.account.name}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Text("Category: ${tx.category.name}", color = MaterialTheme.colorScheme.onSurface)
-                    if (tx.note.isNotBlank()) {
-                        Text("Note: ${tx.note}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), fontSize = 12.sp)
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { viewModel.confirmTransaction() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                ) { Text("Record", fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.cancelTransaction() }) { Text("Cancel") }
-            }
-        )
-    }
+
 
     // Exit strategy: swipe right -> liquidate.
     pendingLiquidation?.let { item ->

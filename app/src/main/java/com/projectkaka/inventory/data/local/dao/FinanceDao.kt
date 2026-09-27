@@ -32,6 +32,13 @@ data class ContactSummaryRow(
     val earliestDueDate: Long?
 )
 
+/** Aggregated account information with relation counts. */
+data class AccountWithCounts(
+    @androidx.room.Embedded val account: AccountEntity,
+    @androidx.room.ColumnInfo(name = "transaction_count") val transactionCount: Int,
+    @androidx.room.ColumnInfo(name = "ledger_link_count") val ledgerLinkCount: Int
+)
+
 /**
  * Full financial data-access layer.
  *
@@ -62,6 +69,15 @@ interface FinanceDao {
     @Query("SELECT * FROM accounts WHERE is_active = 1 ORDER BY name ASC")
     fun getActiveAccounts(): Flow<List<AccountEntity>>
 
+    @Query("""
+        SELECT a.*, 
+               (SELECT COUNT(*) FROM financial_transactions t WHERE t.account_id = a.id) AS transaction_count,
+               (SELECT COUNT(*) FROM ledger_entries l WHERE l.account_id = a.id) AS ledger_link_count
+        FROM accounts a
+        ORDER BY a.name ASC
+    """)
+    fun observeAccountsWithCounts(): Flow<List<AccountWithCounts>>
+
     @Query("SELECT * FROM accounts WHERE id = :id LIMIT 1")
     suspend fun getAccountById(id: Int): AccountEntity?
 
@@ -71,6 +87,10 @@ interface FinanceDao {
     /** All accounts, for alias-matching in the parser (loaded once per session). */
     @Query("SELECT * FROM accounts WHERE is_active = 1")
     suspend fun getActiveAccountsSnapshot(): List<AccountEntity>
+
+    /** All accounts, for mass recalculation or full snapshot. */
+    @Query("SELECT * FROM accounts")
+    suspend fun getAllAccountsSnapshot(): List<AccountEntity>
 
     /**
      * Stored balance for one account.
@@ -341,7 +361,10 @@ interface FinanceDao {
     @Query(
         """
         SELECT * FROM ledger_entries
-        WHERE (:contactName IS NULL OR contact_name LIKE '%' || :contactName || '%')
+        WHERE (:contactQuery IS NULL OR 
+               contact_name LIKE '%' || :contactQuery || '%' ESCAPE '\' OR 
+               aliases LIKE '%' || :contactQuery || '%' ESCAPE '\' OR 
+               contact_phone LIKE '%' || :contactQuery || '%' ESCAPE '\')
           AND (:isSettled IS NULL OR is_settled = :isSettled)
           AND (:minAmount IS NULL OR amount >= :minAmount)
           AND (:maxAmount IS NULL OR amount <= :maxAmount)
@@ -350,14 +373,14 @@ interface FinanceDao {
         ORDER BY created_at DESC
         """
     )
-    suspend fun searchLedgerEntries(
-        contactName: String?,
+    fun searchLedgerEntries(
+        contactQuery: String?,
         isSettled: Boolean?,
         minAmount: Long?,
         maxAmount: Long?,
         minDate: Long?,
         maxDate: Long?
-    ): List<LedgerEntryEntity>
+    ): kotlinx.coroutines.flow.Flow<List<LedgerEntryEntity>>
 
     // ── Export snapshot ──────────────────────────────────────────────────
 

@@ -7,9 +7,7 @@ import com.projectkaka.inventory.KakaApplication
 import com.projectkaka.inventory.data.local.entity.CareTaskEntity
 import com.projectkaka.inventory.data.local.entity.ItemEntity
 import com.projectkaka.inventory.data.local.entity.ItemStatus
-import com.projectkaka.inventory.data.local.entity.TransactionEntity
 import com.projectkaka.inventory.data.repository.DueTaskRow
-import com.projectkaka.inventory.data.repository.ResolvedTransaction
 import com.projectkaka.inventory.data.triage.DueTask
 import com.projectkaka.inventory.data.triage.TriageClock
 import com.projectkaka.inventory.model.Money
@@ -47,8 +45,6 @@ data class DashboardUiState(
     val totalCashBalance: Money = Money(0),
     val remainingDays: Int = 0,
     val todaySpending: Money = Money(0),
-    val pendingTransaction: ResolvedTransaction? = null,
-    val lastTransactionMessage: String? = null,
     
     // ── Settings ──
     val showQuickLog: Boolean = true,
@@ -94,11 +90,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     val query: StateFlow<String> = _query
 
     private val _searchError = MutableStateFlow<String?>(null)
-    private val _pendingTransaction = MutableStateFlow<ResolvedTransaction?>(null)
-    private val _lastTransactionMsg = MutableStateFlow<String?>(null)
-    
-    private val _pendingAction = MutableStateFlow<String?>(null)
-    val pendingAction: StateFlow<String?> = _pendingAction
 
     private val _triggerEmergencyAlert = MutableStateFlow(false)
     private val _overspendStrikeCount = MutableStateFlow(0)
@@ -114,80 +105,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     //  Magic Input Bar: query -> parse -> @RawQuery  OR  f/ -> financial
     // ════════════════════════════════════════════════════════════════════
 
-    private val searchResults: StateFlow<List<ItemEntity>> = combine(_query, financeRepo.observeAllAccountBalances(), financeRepo.getAllCategories()) { q, accs, cats -> Triple(q, accs, cats) }
+    private val searchResults: StateFlow<List<ItemEntity>> = _query
         .debounce(180)
-        .map { Triple(it.first.trim(), it.second, it.third) }
-        .distinctUntilChanged { old, new -> old.first == new.first }
-        .flatMapLatest { (text, accounts, categories) ->
+        .map { it.trim() }
+        .distinctUntilChanged()
+        .flatMapLatest { text ->
             if (text.isEmpty()) {
                 _searchError.value = null
-                _pendingTransaction.value = null
                 repository.getActiveItems()
             } else {
-                val accAliases = accounts.flatMap { listOf(it.name) + it.aliases.split(",").map { a -> a.trim() } }.filter { it.isNotBlank() }.map { it.lowercase() }.toSet()
-                val catAliases = categories.flatMap { listOf(it.name) + it.aliases.split(",").map { a -> a.trim() } }.filter { it.isNotBlank() }.map { it.lowercase() }.toSet()
-                
-                when (val result = MagicInputParser.parse(text, accAliases, catAliases)) {
+                when (val result = MagicInputParser.parse(text)) {
                     is ParseResult.Success -> {
                         _searchError.value = null
-                        _pendingTransaction.value = null
                         repository.searchItems(result.value.query)
-                    }
-                    is ParseResult.Financial -> {
-                        _searchError.value = null
-                        resolveFinancialCommand(result.command)
-                        flowOf(emptyList())
                     }
                     is ParseResult.Error -> {
                         _searchError.value = result.message
-                        _pendingTransaction.value = null
-                        flowOf(emptyList())
-                    }
-                    is ParseResult.Action -> {
-                        _searchError.value = null
-                        _pendingTransaction.value = null
-                        _pendingAction.value = result.actionType
-                        _query.value = "" // clear query so it doesn't try to search for the command
-                        flowOf(emptyList())
-                    }
-                    is ParseResult.InitAccount -> {
-                        _searchError.value = null
-                        _pendingTransaction.value = null
-                        viewModelScope.launch {
-                            financeRepo.initializeAccountBalance(result.accountAlias, Money((result.amount * 100).toLong()))
-                            _lastTransactionMsg.value = "Initialized ${result.accountAlias} to ৳${result.amount}"
-                            _query.value = ""
-                        }
-                        flowOf(emptyList())
-                    }
-                    is ParseResult.AlterAccount -> {
-                        _searchError.value = null
-                        _pendingTransaction.value = null
-                        viewModelScope.launch {
-                            val account = financeRepo.resolveAccount(result.accountAlias)
-                            if (account != null) {
-                                financeRepo.updateAccount(account.copy(name = result.newName))
-                                _lastTransactionMsg.value = "Renamed ${account.name} → ${result.newName}"
-                            } else {
-                                _searchError.value = "Account \"${result.accountAlias}\" not found."
-                            }
-                            _query.value = ""
-                        }
-                        flowOf(emptyList())
-                    }
-                    is ParseResult.DeleteAccount -> {
-                        _searchError.value = null
-                        _pendingTransaction.value = null
-                        viewModelScope.launch {
-                            val account = financeRepo.resolveAccount(result.accountAlias)
-                            if (account != null) {
-                                financeRepo.deleteAccount(account)
-                                _lastTransactionMsg.value = "Deleted account: ${account.name}"
-                            } else {
-                                _searchError.value = "Account \"${result.accountAlias}\" not found."
-                            }
-                            _query.value = ""
-                        }
                         flowOf(emptyList())
                     }
                 }
@@ -279,16 +212,13 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             listState,
             dueTasks,
             combine(statsState, budgetState) { s, b -> Pair(s, b) },
-            combine(_pendingTransaction, _lastTransactionMsg, quickLogState) { pending, msg, ql -> Triple(pending, msg, ql) },
+            quickLogState,
             combine(_triggerEmergencyAlert, _overspendStrikeCount, financeRepo.observeAllAccountBalances(), financeRepo.getAllCategories(), prefs.hiddenAccountIds) { alert, strikes, balances, cats, hiddenIds -> 
                 listOf(alert, strikes, balances, cats, hiddenIds) 
             }
-        ) { list, due, statsAndBudget, pendingGroup, alertGroup ->
+        ) { list, due, statsAndBudget, ql, alertGroup ->
             val stats = statsAndBudget.first
             val budget = statsAndBudget.second
-            val pending = pendingGroup.first
-            val msg = pendingGroup.second
-            val ql = pendingGroup.third
             val alert = alertGroup[0] as Boolean
             val strikes = alertGroup[1] as Int
             val balances = alertGroup[2] as List<com.projectkaka.inventory.data.local.entity.AccountEntity>
@@ -309,8 +239,6 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 totalCashBalance = budget.totalCashBalance,
                 remainingDays = budget.remainingDays,
                 todaySpending = budget.todaySpending,
-                pendingTransaction = pending,
-                lastTransactionMessage = msg,
                 showQuickLog = ql.showQuickLog,
                 qlDebitAcc = ql.qlDebitAcc,
                 qlDebitCat = ql.qlDebitCat,
@@ -334,12 +262,23 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     fun clearQuery() {
         _query.value = ""
         _searchError.value = null
-        _pendingTransaction.value = null
     }
 
-    fun clearAction() {
-        _pendingAction.value = null
-        _query.value = ""
+    private val terminalExecutor by lazy {
+        com.projectkaka.inventory.search.TerminalExecutor(financeRepo)
+    }
+
+    fun executeTerminalCommand(input: String, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val result = terminalExecutor.execute(input)
+            val msg = when (result) {
+                is com.projectkaka.inventory.search.TerminalResult.Success -> result.message
+                is com.projectkaka.inventory.search.TerminalResult.Failure -> result.reason
+                is com.projectkaka.inventory.search.TerminalResult.NeedsInput -> result.question
+                is com.projectkaka.inventory.search.TerminalResult.Pending -> "Command pending"
+            }
+            onResult(msg)
+        }
     }
 
     fun liquidate(item: ItemEntity, status: ItemStatus, recovered: Money) {
@@ -364,111 +303,8 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    // ── Financial commands ───────────────────────────────────────────────
-
-    /**
-     * Called when the user taps the ✓ Record button on the confirmation card.
-     * Inserts the transaction and shows a success message.
-     */
-    fun confirmTransaction() {
-        val resolved = _pendingTransaction.value ?: return
-        viewModelScope.launch {
-            financeRepo.recordTransaction(
-                TransactionEntity(
-                    amount = resolved.amount,
-                    accountId = resolved.account.id,
-                    categoryId = resolved.category.id,
-                    isCredit = resolved.isCredit,
-                    note = resolved.note
-                )
-            )
-            val direction = if (resolved.isCredit) "to" else "from"
-            _lastTransactionMsg.value =
-                "Recorded ৳${resolved.amount.minorUnits / 100.0} $direction ${resolved.account.name} → ${resolved.category.name}"
-            
-            // ── 3-Strike Overspend Check ──
-            if (!resolved.isCredit) {
-                val zone = ZoneId.systemDefault()
-                val today = LocalDate.now()
-                val dayStartMs = today.atStartOfDay(zone).toInstant().toEpochMilli()
-                val dayEndMs = today.atTime(LocalTime.MAX).atZone(zone).toInstant().toEpochMilli()
-                
-                val todayTotal = financeRepo.getDaySpending(dayStartMs, dayEndMs)
-                val cashBalance = budgetState.value.totalCashBalance
-                val remainingDays = budgetState.value.remainingDays
-                val dailyBudget = if (remainingDays > 0) Money(cashBalance.minorUnits / remainingDays) else Money(0)
-                
-                if (todayTotal > dailyBudget && dailyBudget > Money(0)) {
-                    val strikes = prefs.incrementOverspendStrike()
-                    _overspendStrikeCount.value = strikes
-                    
-                    if (strikes >= 3) {
-                        _triggerEmergencyAlert.value = true
-                        prefs.resetOverspendStrikes()
-                    }
-                }
-            }
-            
-            _pendingTransaction.value = null
-            _query.value = ""
-        }
-    }
-
     fun clearEmergencyAlert() {
         _triggerEmergencyAlert.value = false
-    }
-
-    /** Called when the user taps Cancel on the financial confirmation card. */
-    fun cancelTransaction() {
-        _pendingTransaction.value = null
-        _query.value = ""
-        _searchError.value = null
-    }
-
-    /** Dismiss the "transaction recorded" snackbar message. */
-    fun clearTransactionMessage() {
-        _lastTransactionMsg.value = null
-    }
-
-    // ── Private helpers ─────────────────────────────────────────────────
-
-    /**
-     * Resolves account + category aliases from the raw parsed command.
-     * If both resolve, shows a confirmation card. Otherwise shows an error.
-     */
-    private suspend fun resolveFinancialCommand(
-        command: com.projectkaka.inventory.search.FinancialCommand
-    ) {
-        val account = if (command.accountToken != null) {
-            financeRepo.resolveAccount(command.accountToken)
-        } else {
-            financeRepo.resolveAccount("Cash")
-        }
-        
-        val category = if (command.categoryToken != null) {
-            financeRepo.resolveCategory(command.categoryToken)
-        } else {
-            if (command.isCredit) financeRepo.resolveCategory("Uncategorized Income")
-            else financeRepo.resolveCategory("Uncategorized Expense")
-        }
-
-        if (account != null && category != null) {
-            _pendingTransaction.value = ResolvedTransaction(
-                amount = com.projectkaka.inventory.model.Money((command.amount * 100).toLong()),
-                isCredit = command.isCredit,
-                account = account,
-                category = category,
-                note = command.note
-            )
-            _searchError.value = null
-        } else {
-            _pendingTransaction.value = null
-            _searchError.value = buildString {
-                if (account == null) append("Unknown account: \"${command.accountToken ?: "Cash"}\". ")
-                if (category == null) append("Unknown category: \"${command.categoryToken ?: "Uncategorized"}\".")
-                append("\nTip: kaka show alias to see all shortcuts")
-            }
-        }
     }
 
     companion object {

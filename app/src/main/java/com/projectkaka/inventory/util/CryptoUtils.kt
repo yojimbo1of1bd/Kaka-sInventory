@@ -25,7 +25,11 @@ object CryptoUtils {
     }
 
     fun verifyPin(pin: String, hashBase64: String, saltBase64: String, iterations: Int): Boolean {
-        val newHash = hashPin(pin, saltBase64, iterations)
-        return newHash == hashBase64
+        val salt = Base64.decode(saltBase64, Base64.NO_WRAP)
+        val spec = PBEKeySpec(pin.toCharArray(), salt, iterations, KEY_LENGTH)
+        val factory = SecretKeyFactory.getInstance(ALGORITHM)
+        val candidateHashBytes = factory.generateSecret(spec).encoded
+        val storedHashBytes = Base64.decode(hashBase64, Base64.NO_WRAP)
+        return java.security.MessageDigest.isEqual(candidateHashBytes, storedHashBytes)
     }
 }

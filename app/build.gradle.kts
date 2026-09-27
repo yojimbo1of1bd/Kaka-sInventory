@@ -52,7 +52,6 @@ ksp {
     arg("room.generateKotlin", "true")
 }
 
-
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -96,7 +95,15 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
-    testImplementation("org.robolectric:robolectric:4.11.1")
-    testImplementation("androidx.test.ext:junit:1.1.5")
-    testImplementation("androidx.room:room-testing:2.6.1")
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+}
+
+tasks.register("testClasses") {
+    dependsOn("compileDebugUnitTestSources")
+}
+
+tasks.register("unitTestClasses") {
+    dependsOn("testClasses")
 }

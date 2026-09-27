@@ -66,10 +66,16 @@ class GraphViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<GraphUiState> = combine(
         filterState,
         financeRepo.getAllTransactions(),
-        financeRepo.getActiveAccounts(),
-        financeRepo.getAllCategories()
-    ) { filters, txs, accs, cats ->
-        buildGraphState(txs, accs, cats, filters.bucket, filters.selAcc, filters.selCat, filters.byAcc)
+        financeRepo.getAllAccounts(),
+        financeRepo.getAllCategories(),
+        financeRepo.getAllLedgerEntries()
+    ) { args ->
+        val filters = args[0] as FilterState
+        val txs = args[1] as List<TransactionEntity>
+        val accs = args[2] as List<AccountEntity>
+        val cats = args[3] as List<FinancialCategoryEntity>
+        val ledgers = args[4] as List<com.projectkaka.inventory.data.local.entity.LedgerEntryEntity>
+        buildGraphState(txs, accs, cats, ledgers, filters.bucket, filters.selAcc, filters.selCat, filters.byAcc)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), GraphUiState())
 
     companion object {
@@ -77,6 +83,7 @@ class GraphViewModel(application: Application) : AndroidViewModel(application) {
             transactions: List<TransactionEntity>,
             accs: List<AccountEntity>,
             cats: List<FinancialCategoryEntity>,
+            ledgers: List<com.projectkaka.inventory.data.local.entity.LedgerEntryEntity>,
             bucketSize: BucketSize,
             selAcc: Set<Int>,
             selCat: Set<Int>,
@@ -86,7 +93,7 @@ class GraphViewModel(application: Application) : AndroidViewModel(application) {
         val zone = clock.zone
         val today = LocalDate.now(clock)
         
-        if (transactions.isEmpty() && accs.all { it.openingBalance.minorUnits == 0L }) {
+        if (transactions.isEmpty() && ledgers.isEmpty() && accs.all { it.openingBalance.minorUnits == 0L }) {
             return GraphUiState(
                 isLoading = false,
                 bucketSize = bucketSize,
@@ -148,14 +155,17 @@ class GraphViewModel(application: Application) : AndroidViewModel(application) {
             val targetAccountIds = targetAccounts.map { it.id }.toSet()
             
             seriesNames.addAll(listOf("Assets", "Net Worth", "Liabilities", "Receivables"))
+            
             val entriesAssets = mutableListOf<FloatEntry>()
             val entriesNetWorth = mutableListOf<FloatEntry>()
             val entriesLiab = mutableListOf<FloatEntry>()
             val entriesRec = mutableListOf<FloatEntry>()
             
-            var runningAssets = targetAccounts.fold(Money(0)) { acc, account -> acc + account.openingBalance }
-            var runningPayables = Money(0)
-            var runningReceivables = Money(0)
+            val assetAccIds = targetAccounts.filter { it.type == com.projectkaka.inventory.data.local.entity.AccountType.CASH || it.type == com.projectkaka.inventory.data.local.entity.AccountType.ASSET }.map { it.id }.toSet()
+            val liabAccIds = targetAccounts.filter { it.type == com.projectkaka.inventory.data.local.entity.AccountType.LIABILITY }.map { it.id }.toSet()
+
+            var runningAssetAccs = targetAccounts.filter { it.id in assetAccIds }.fold(Money(0)) { acc, account -> acc + account.openingBalance }
+            var runningLiabAccs = targetAccounts.filter { it.id in liabAccIds }.fold(Money(0)) { acc, account -> acc + account.openingBalance }
             
             val txByBucket = transactions.groupBy { tx ->
                 val date = Instant.ofEpochMilli(tx.timestamp).atZone(zone).toLocalDate()
@@ -170,26 +180,46 @@ class GraphViewModel(application: Application) : AndroidViewModel(application) {
                 val bTxs = txByBucket[bucket] ?: emptyList()
                 
                 bTxs.forEach { tx ->
-                    if (targetAccountIds.contains(tx.accountId)) {
-                        if (tx.isCredit) runningAssets += tx.amount
-                        else runningAssets -= tx.amount
-                        
-                        if (tx.type == TransactionType.DEBT_ISSUE) {
-                            if (tx.isCredit) runningPayables += tx.amount
-                            else runningReceivables += tx.amount
-                        } else if (tx.type == TransactionType.DEBT_SETTLE) {
-                            if (!tx.isCredit) runningPayables -= tx.amount
-                            else runningReceivables -= tx.amount
+                    if (tx.accountId in targetAccountIds) {
+                        if (tx.accountId in assetAccIds) {
+                            if (tx.isCredit) runningAssetAccs += tx.amount
+                            else runningAssetAccs -= tx.amount
+                        }
+                        if (tx.accountId in liabAccIds) {
+                            if (tx.isCredit) runningLiabAccs += tx.amount
+                            else runningLiabAccs -= tx.amount
                         }
                     }
                 }
                 
-                val netWorth = runningAssets - runningPayables
+                val bucketEndLocalDate = when (bucketSize) {
+                    BucketSize.DAY -> bucket
+                    BucketSize.WEEK -> bucket.plusDays(6)
+                    BucketSize.MONTH -> bucket.withDayOfMonth(bucket.lengthOfMonth())
+                }
+                val bucketEndMillis = bucketEndLocalDate.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+
+                val outstandingPayables = ledgers.filter { 
+                    it.type == com.projectkaka.inventory.data.local.entity.LedgerType.PAYABLE && 
+                    !it.isSettled && 
+                    it.createdAt <= bucketEndMillis 
+                }.fold(Money(0)) { acc, entry -> acc + entry.amount }
                 
-                entriesAssets.add(FloatEntry(index.toFloat(), runningAssets.minorUnits / 100f))
+                val outstandingReceivables = ledgers.filter { 
+                    it.type == com.projectkaka.inventory.data.local.entity.LedgerType.RECEIVABLE && 
+                    !it.isSettled && 
+                    it.createdAt <= bucketEndMillis 
+                }.fold(Money(0)) { acc, entry -> acc + entry.amount }
+                
+                val assets = runningAssetAccs
+                val liabilities = runningLiabAccs + outstandingPayables
+                val receivables = outstandingReceivables
+                val netWorth = assets - liabilities + receivables
+                
+                entriesAssets.add(FloatEntry(index.toFloat(), assets.minorUnits / 100f))
                 entriesNetWorth.add(FloatEntry(index.toFloat(), netWorth.minorUnits / 100f))
-                entriesLiab.add(FloatEntry(index.toFloat(), runningPayables.minorUnits / 100f))
-                entriesRec.add(FloatEntry(index.toFloat(), runningReceivables.minorUnits / 100f))
+                entriesLiab.add(FloatEntry(index.toFloat(), liabilities.minorUnits / 100f))
+                entriesRec.add(FloatEntry(index.toFloat(), receivables.minorUnits / 100f))
             }
             
             seriesMap["Assets"] = entriesAssets

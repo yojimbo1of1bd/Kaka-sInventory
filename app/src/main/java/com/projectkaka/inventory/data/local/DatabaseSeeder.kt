@@ -18,8 +18,15 @@ object DatabaseSeeder {
 
     fun seed(db: SupportSQLiteDatabase) {
         val now = System.currentTimeMillis()
-        seedAccounts(db, now)
+        seedAccounts(db, now) // legacy v1 format (REAL opening_balance)
         seedCategories(db, now)
+    }
+
+    fun seedV6(db: SupportSQLiteDatabase) {
+        val now = System.currentTimeMillis()
+        seedAccountsV6(db, now)
+        seedCategories(db, now)
+        seedPhase3Defaults(db, now)
     }
 
     // ── Accounts ─────────────────────────────────────────────────────────
@@ -41,6 +48,48 @@ object DatabaseSeeder {
                 """
                 INSERT OR IGNORE INTO accounts (name, type, aliases, opening_balance, is_active, created_at)
                 VALUES ('${acct.name}', '${acct.type.name}', '${acct.aliases}', 0.0, 1, $now)
+                """.trimIndent()
+            )
+        }
+    }
+
+    private fun seedAccountsV6(db: SupportSQLiteDatabase, now: Long) {
+        data class Seed(val name: String, val type: AccountType, val aliases: String)
+
+        val accounts = listOf(
+            Seed("Cash",   AccountType.CASH,      "cash,naqd,haat,hand,pocket,taka,haaterkhor"),
+            Seed("bKash",  AccountType.CASH,      "bkash,bikash,bk"),
+            Seed("Nagad",  AccountType.CASH,      "nagad,ngd"),
+            Seed("Rocket", AccountType.CASH,      "rocket,rkt,dbbl"),
+            Seed("Bank",   AccountType.CASH,      "bank,account,saving,savings,sonchoy"),
+            Seed("Credit", AccountType.LIABILITY, "credit,udhar,dhar,loan,joma")
+        )
+
+        accounts.forEach { acct ->
+            db.execSQL(
+                """
+                INSERT OR IGNORE INTO accounts (name, type, aliases, opening_balance, balance_minor, is_active, created_at)
+                VALUES ('${acct.name}', '${acct.type.name}', '${acct.aliases}', 0, 0, 1, $now)
+                """.trimIndent()
+            )
+        }
+    }
+
+    fun seedPhase3Defaults(db: SupportSQLiteDatabase, now: Long = System.currentTimeMillis()) {
+        data class Seed(val name: String, val type: AccountType, val aliases: String)
+
+        val accounts = listOf(
+            Seed("Assets",      AccountType.ASSET,     "assets,sompod,property"),
+            Seed("Liabilities", AccountType.LIABILITY, "liabilities,daya,dhyan"),
+            Seed("Capital",     AccountType.CAPITAL,   "capital,equity,muldon"),
+            Seed("Cash",        AccountType.CASH,      "cash")
+        )
+
+        accounts.forEach { acct ->
+            db.execSQL(
+                """
+                INSERT OR IGNORE INTO accounts (name, type, aliases, opening_balance, balance_minor, is_active, created_at)
+                VALUES ('${acct.name}', '${acct.type.name}', '${acct.aliases}', 0, 0, 1, $now)
                 """.trimIndent()
             )
         }

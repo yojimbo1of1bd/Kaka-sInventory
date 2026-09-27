@@ -102,7 +102,7 @@ fun EmergencyContactScreen(
             TextButton(
                 onClick = { 
                     if (!permStorage) {
-                        android.widget.Toast.makeText(context, "Storage & Media permission disabled in Settings", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "Storage & Media disabled. Enable in Settings -> Privacy.", android.widget.Toast.LENGTH_LONG).show()
                     } else {
                         pickMedia.launch(
                             androidx.activity.result.PickVisualMediaRequest(

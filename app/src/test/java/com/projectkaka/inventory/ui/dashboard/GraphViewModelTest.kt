@@ -7,6 +7,8 @@ import com.projectkaka.inventory.data.local.entity.FinancialCategoryEntity
 import com.projectkaka.inventory.data.local.entity.CategoryType
 import com.projectkaka.inventory.data.local.entity.TransactionEntity
 import com.projectkaka.inventory.data.local.entity.TransactionType
+import com.projectkaka.inventory.data.local.entity.LedgerEntryEntity
+import com.projectkaka.inventory.data.local.entity.LedgerType
 import com.projectkaka.inventory.model.Money
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -76,6 +78,16 @@ class GraphViewModelTest {
             type = TransactionType.DEBT_ISSUE,
             timestamp = Instant.parse("2023-10-12T10:00:00Z").toEpochMilli()
         )
+        val l1 = LedgerEntryEntity(
+            id = 1,
+            contactName = "Alice",
+            accountId = 1,
+            amount = Money(10000),
+            type = LedgerType.PAYABLE,
+            isSettled = false,
+            linkedTransactionId = 4,
+            createdAt = Instant.parse("2023-10-12T10:00:00Z").toEpochMilli()
+        )
 
         // Day 4: Lend 4000 (Receivable) from Cash
         val t4 = TransactionEntity(
@@ -88,15 +100,27 @@ class GraphViewModelTest {
             type = TransactionType.DEBT_ISSUE,
             timestamp = Instant.parse("2023-10-13T10:00:00Z").toEpochMilli()
         )
+        val l2 = LedgerEntryEntity(
+            id = 2,
+            contactName = "Bob",
+            accountId = 1,
+            amount = Money(4000),
+            type = LedgerType.RECEIVABLE,
+            isSettled = false,
+            linkedTransactionId = 5,
+            createdAt = Instant.parse("2023-10-13T10:00:00Z").toEpochMilli()
+        )
 
         val transactions = listOf(t1, t2a, t2b, t3, t4)
         val accounts = listOf(acc1, acc2)
         val categories = listOf(cat1)
+        val ledgers = listOf(l1, l2)
 
         val state = GraphViewModel.buildGraphState(
             transactions = transactions,
             accs = accounts,
             cats = categories,
+            ledgers = ledgers,
             bucketSize = BucketSize.DAY,
             selAcc = emptySet(),
             selCat = emptySet(),
@@ -144,22 +168,25 @@ class GraphViewModelTest {
         assertEquals(100f, liab[2].y)
         assertEquals(0f, rec[2].y)
 
-        // Day 3: lend 4000 -> Assets = 64000, NW = 54000 (Assets - Liabilities), L = 10000, R = 4000
+        // Day 3: lend 4000 -> Assets = 64000, NW = 58000 (Assets - Liabilities + Receivables), L = 10000, R = 4000
         assertEquals(640f, assets[3].y)
-        assertEquals(540f, netWorth[3].y)
+        assertEquals(580f, netWorth[3].y)
         assertEquals(100f, liab[3].y)
         assertEquals(40f, rec[3].y)
 
         // Day 4: no changes
         assertEquals(640f, assets[4].y)
-        assertEquals(540f, netWorth[4].y)
+        assertEquals(580f, netWorth[4].y)
         assertEquals(100f, liab[4].y)
         assertEquals(40f, rec[4].y)
 
-        // Day 5: no changes
+        // Day 5: no changes (final bucket reconciles with account and ledger totals)
+        val outstandingPayableTotal = ledgers.filter { it.type == LedgerType.PAYABLE && !it.isSettled }.sumOf { it.amount.minorUnits } / 100f
+        val outstandingReceivableTotal = ledgers.filter { it.type == LedgerType.RECEIVABLE && !it.isSettled }.sumOf { it.amount.minorUnits } / 100f
+        
         assertEquals(640f, assets[5].y)
-        assertEquals(540f, netWorth[5].y)
-        assertEquals(100f, liab[5].y)
-        assertEquals(40f, rec[5].y)
+        assertEquals(580f, netWorth[5].y)
+        assertEquals(outstandingPayableTotal, liab[5].y)
+        assertEquals(outstandingReceivableTotal, rec[5].y)
     }
 }

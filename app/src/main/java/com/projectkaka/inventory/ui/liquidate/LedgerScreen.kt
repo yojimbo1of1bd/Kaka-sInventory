@@ -141,6 +141,32 @@ fun LedgerScreen(
                 ) { Text("Contacts") }
             }
 
+            OutlinedTextField(
+                value = state.searchQuery,
+                onValueChange = { viewModel.updateSearchQuery(it) },
+                label = { Text("Search by name, alias, or phone") },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                singleLine = true
+            )
+
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                SegmentedButton(
+                    selected = state.filterSettled == false,
+                    onClick = { viewModel.updateFilterSettled(false) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3)
+                ) { Text("Unsettled") }
+                SegmentedButton(
+                    selected = state.filterSettled == true,
+                    onClick = { viewModel.updateFilterSettled(true) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3)
+                ) { Text("Settled") }
+                SegmentedButton(
+                    selected = state.filterSettled == null,
+                    onClick = { viewModel.updateFilterSettled(null) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3)
+                ) { Text("All") }
+            }
+
             if (viewMode == "Entries") {
                 if (state.entries.isEmpty()) {
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -173,7 +199,13 @@ fun LedgerScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(state.summaries, key = { it.contactName }) { summary ->
-                            ContactSummaryCard(summary = summary)
+                            ContactSummaryCard(
+                                summary = summary,
+                                onClick = {
+                                    viewModel.updateSearchQuery(summary.contactName)
+                                    viewMode = "Entries"
+                                }
+                            )
                         }
                     }
                 }
@@ -235,7 +267,7 @@ private fun LedgerEntryCard(
             if (entry.contactPhone.isNotBlank() && isReceivable) {
                 IconButton(onClick = {
                     if (!permSmsCalls) {
-                        android.widget.Toast.makeText(context, "SMS & Calls permission disabled in Settings", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "SMS & Calls disabled. Enable in Settings -> Privacy.", android.widget.Toast.LENGTH_LONG).show()
                     } else {
                         val rawPhone = entry.contactPhone.replace(Regex("[^0-9+]"), "")
                         val phone = if (rawPhone.startsWith("0")) "+88$rawPhone" else rawPhone
@@ -300,10 +332,11 @@ private fun LedgerEntryCard(
 
 @Composable
 private fun ContactSummaryCard(
-    summary: com.projectkaka.inventory.data.local.dao.ContactSummaryRow
+    summary: com.projectkaka.inventory.data.local.dao.ContactSummaryRow,
+    onClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -449,7 +482,7 @@ private fun AddLedgerEntryDialog(
     
     fun launchVoiceInput() {
         if (!permMicrophone) {
-            Toast.makeText(context, "Microphone permission disabled in Settings", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Microphone disabled. Enable in Settings -> Privacy.", Toast.LENGTH_LONG).show()
             return
         }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -505,7 +538,7 @@ private fun AddLedgerEntryDialog(
                     IconButton(
                         onClick = {
                             if (!permContacts) {
-                                Toast.makeText(context, "Contacts permission disabled in Settings", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Contacts permission disabled. Enable in Settings -> Privacy.", Toast.LENGTH_LONG).show()
                                 return@IconButton
                             }
                             // Gate the contact picker behind a runtime permission check

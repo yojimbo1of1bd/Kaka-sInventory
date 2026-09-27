@@ -35,7 +35,7 @@ class DraftViewModel(application: Application) : AndroidViewModel(application) {
                     name = name.ifBlank { "Item ${draft.id}" },
                     category = category.ifBlank { "Uncategorized" },
                     locationTag = locationTag.trim(),
-                    estimatedValue = com.projectkaka.inventory.model.Money((estimatedValue.coerceAtLeast(0.0) * 100).toLong()),
+                    estimatedValue = com.projectkaka.inventory.model.Money.fromDouble(estimatedValue.coerceAtLeast(0.0)),
                     isDraft = false
                 )
             )

@@ -24,9 +24,10 @@ import androidx.compose.material.icons.filled.Add
 fun AccountsManagerScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
-    viewModel: AliasGuideViewModel = viewModel()
+    viewModel: AccountsManagerViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var editAccountId by remember { mutableStateOf<Int?>(null) }
     var editAccountAlias by remember { mutableStateOf<String?>(null) }
     var editAmount by remember { mutableStateOf("") }
     
@@ -34,6 +35,8 @@ fun AccountsManagerScreen(
     var newAccountName by remember { mutableStateOf("") }
     var newAccountBalance by remember { mutableStateOf("") }
     var newAccountType by remember { mutableStateOf(AccountType.CASH) }
+    
+    var showMessageDialog by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         modifier = modifier.fillMaxSize().systemBarsPadding(),
@@ -62,48 +65,61 @@ fun AccountsManagerScreen(
         ) {
             item {
                 Text(
-                    text = "Edit starting balances directly. This will not create a transaction record.",
+                    text = "Edit opening balances directly. This will not create a transaction record, but balance is recalculated.",
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                     fontSize = 14.sp,
                     modifier = Modifier.padding(bottom = 16.dp, top = 8.dp)
                 )
             }
 
-            items(state.accounts) { account ->
+            items(state.accountsWithCounts) { awc ->
+                val account = awc.account
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (account.isActive) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(account.name, fontWeight = FontWeight.Bold)
-                            Text("Base: ৳${account.openingBalance}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                    Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column {
+                                Text("${account.name} (${account.type.name})", fontWeight = FontWeight.Bold, color = if (account.isActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                Text("Balance: ৳${account.balance}", fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                                Text("Opening: ৳${account.openingBalance}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                                Text("Transactions: ${awc.transactionCount} | Ledger Links: ${awc.ledgerLinkCount}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                            }
                         }
                         
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "Dashboard", 
-                                fontSize = 12.sp, 
-                                modifier = Modifier.padding(end = 4.dp),
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                            )
-                            Switch(
-                                checked = !state.hiddenAccountIds.contains(account.id),
-                                onCheckedChange = { isVisible ->
-                                    viewModel.toggleAccountVisibility(account.id, !isVisible)
-                                },
-                                modifier = Modifier.padding(end = 8.dp)
-                            )
-                            Button(onClick = { 
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(onClick = { 
+                                editAccountId = account.id
                                 editAccountAlias = account.name
                                 editAmount = account.openingBalance.toString()
                             }) {
-                                Text("Edit")
+                                Text("Edit Bal")
+                            }
+                            TextButton(onClick = { 
+                                viewModel.archiveAccount(account.id, account.isActive)
+                            }) {
+                                Text(if (account.isActive) "Archive" else "Unarchive")
+                            }
+                            TextButton(
+                                onClick = { 
+                                    viewModel.deleteAccount(account.id) { success, msg ->
+                                        showMessageDialog = msg
+                                    }
+                                },
+                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Text("Delete")
                             }
                         }
                     }
@@ -112,15 +128,15 @@ fun AccountsManagerScreen(
         }
     }
 
-    if (editAccountAlias != null) {
+    if (editAccountId != null) {
         AlertDialog(
-            onDismissRequest = { editAccountAlias = null },
-            title = { Text("Set Balance for ${editAccountAlias}") },
+            onDismissRequest = { editAccountId = null },
+            title = { Text("Set Opening Balance for ${editAccountAlias}") },
             text = {
                 OutlinedTextField(
                     value = editAmount,
                     onValueChange = { editAmount = it },
-                    label = { Text("New Active Balance") },
+                    label = { Text("New Opening Balance") },
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
                 )
             },
@@ -128,15 +144,15 @@ fun AccountsManagerScreen(
                 TextButton(onClick = {
                     val amount = editAmount.toDoubleOrNull()
                     if (amount != null) {
-                        viewModel.initializeAccountBalance(editAccountAlias!!, amount)
+                        viewModel.updateOpeningBalance(editAccountId!!, amount)
                     }
-                    editAccountAlias = null
+                    editAccountId = null
                 }) {
                     Text("Save")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { editAccountAlias = null }) { Text("Cancel") }
+                TextButton(onClick = { editAccountId = null }) { Text("Cancel") }
             }
         )
     }
@@ -157,7 +173,7 @@ fun AccountsManagerScreen(
                     OutlinedTextField(
                         value = newAccountBalance,
                         onValueChange = { newAccountBalance = it },
-                        label = { Text("Initial Balance") },
+                        label = { Text("Opening Balance") },
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
                     )
@@ -179,7 +195,18 @@ fun AccountsManagerScreen(
                         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                             AccountType.entries.forEach { type ->
                                 DropdownMenuItem(
-                                    text = { Text(type.name) },
+                                    text = { 
+                                        Column {
+                                            Text(type.name, fontWeight = FontWeight.Bold)
+                                            val desc = when(type) {
+                                                AccountType.CASH -> "Liquid funds, included in daily budget."
+                                                AccountType.ASSET -> "Physical assets/investments. Excluded from budget."
+                                                AccountType.LIABILITY -> "Debts like credit cards. Excluded from budget."
+                                                AccountType.CAPITAL -> "Owner equity/savings. Excluded from budget."
+                                            }
+                                            Text(desc, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                                        }
+                                    },
                                     onClick = { 
                                         newAccountType = type
                                         expanded = false 
@@ -206,6 +233,19 @@ fun AccountsManagerScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showAddDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showMessageDialog != null) {
+        AlertDialog(
+            onDismissRequest = { showMessageDialog = null },
+            title = { Text("Information") },
+            text = { Text(showMessageDialog!!) },
+            confirmButton = {
+                TextButton(onClick = { showMessageDialog = null }) {
+                    Text("OK")
+                }
             }
         )
     }

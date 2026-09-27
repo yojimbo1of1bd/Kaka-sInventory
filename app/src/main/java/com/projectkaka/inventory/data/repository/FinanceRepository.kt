@@ -39,8 +39,10 @@ interface FinanceRepository {
     // ── Accounts ────────────────────────────────────────────────────────
 
     fun getAllAccounts(): Flow<List<AccountEntity>>
+    fun observeAccountsWithCounts(): Flow<List<com.projectkaka.inventory.data.local.dao.AccountWithCounts>>
     fun getActiveAccounts(): Flow<List<AccountEntity>>
     suspend fun getActiveAccountsSnapshot(): List<AccountEntity>
+    suspend fun getAllAccountsSnapshot(): List<AccountEntity>
     fun observeAllAccountBalances(): Flow<List<AccountEntity>>
     fun observeTotalCashBalance(): Flow<Money>
     suspend fun getAccountBalance(accountId: Int): Money?
@@ -99,15 +101,14 @@ interface FinanceRepository {
     fun observeTotalReceivable(): Flow<Money>
     fun observeTotalPayable(): Flow<Money>
     fun observeContactSummaries(): Flow<List<com.projectkaka.inventory.data.local.dao.ContactSummaryRow>>
-    
-    suspend fun searchLedgerEntries(
-        contactName: String? = null,
+    fun searchLedgerEntries(
+        contactQuery: String? = null,
         isSettled: Boolean? = null,
         minAmount: Long? = null,
         maxAmount: Long? = null,
         minDate: Long? = null,
         maxDate: Long? = null
-    ): List<LedgerEntryEntity>
+    ): kotlinx.coroutines.flow.Flow<List<LedgerEntryEntity>>
 
     suspend fun issueDebt(
         entry: LedgerEntryEntity,

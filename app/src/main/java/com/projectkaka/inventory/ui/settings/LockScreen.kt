@@ -16,32 +16,37 @@ import androidx.fragment.app.FragmentActivity
 import com.projectkaka.inventory.KakaApplication
 import com.projectkaka.inventory.util.CryptoUtils
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun LockScreen(onUnlock: () -> Unit, app: KakaApplication) {
     val activity = LocalContext.current as FragmentActivity
-    var showPinScreen by remember { mutableStateOf(false) }
+    var showPinScreen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        val executor = ContextCompat.getMainExecutor(activity)
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Project Kaka Locked")
-            .setSubtitle("Authenticate to access your inventory")
-            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-            .build()
-        val biometricPrompt = BiometricPrompt(activity, executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    handleUnlock(app)
-                    onUnlock()
-                }
+        if (!showPinScreen) {
+            val executor = ContextCompat.getMainExecutor(activity)
+            val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Project Kaka Locked")
+                .setSubtitle("Authenticate to access your inventory")
+                .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                .build()
+            val biometricPrompt = BiometricPrompt(activity, executor,
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        handleUnlock(app)
+                        onUnlock()
+                    }
 
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    showPinScreen = true
-                }
-                // Do not override onAuthenticationFailed to eject to PIN screen!
-            })
-        biometricPrompt.authenticate(promptInfo)
+                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                        showPinScreen = true
+                    }
+                    // Do not override onAuthenticationFailed to eject to PIN screen!
+                })
+            biometricPrompt.authenticate(promptInfo)
+        }
     }
 
     if (showPinScreen) {
@@ -60,6 +65,7 @@ fun LockScreen(onUnlock: () -> Unit, app: KakaApplication) {
     }
 }
 
+@OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
 private fun handleUnlock(app: KakaApplication) {
     // Reset lockout
     app.preferences.setLockoutAttempts(0)
@@ -68,22 +74,26 @@ private fun handleUnlock(app: KakaApplication) {
     // Migration 8.5: Hash plaintext PIN on first unlock
     val plaintextPin = app.preferences.appPin.value
     if (plaintextPin.isNotEmpty()) {
-        val salt = CryptoUtils.generateSalt()
-        val hash = CryptoUtils.hashPin(plaintextPin, salt, 100000)
-        app.preferences.setAppPinHash(hash, salt, 100000)
-        app.preferences.clearPlaintextAppPin()
+        kotlinx.coroutines.GlobalScope.launch(Dispatchers.Default) {
+            val salt = CryptoUtils.generateSalt()
+            val hash = CryptoUtils.hashPin(plaintextPin, salt, 100000)
+            app.preferences.setAppPinHash(hash, salt, 100000)
+            app.preferences.clearPlaintextAppPin()
+        }
     }
 }
 
 @Composable
 fun PinUnlockScreen(onUnlock: () -> Unit, app: KakaApplication, onUseBiometrics: () -> Unit) {
-    var pinInput by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(false) }
+    var pinInput by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var error by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var isVerifying by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
     
     val lockoutAttempts = app.preferences.lockoutAttempts.collectAsState()
     val lockoutUntil = app.preferences.lockoutUntil.collectAsState()
     
-    var remainingSeconds by remember { mutableStateOf(0L) }
+    var remainingSeconds by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(0L) }
 
     LaunchedEffect(lockoutUntil.value) {
         while (true) {
@@ -121,29 +131,36 @@ fun PinUnlockScreen(onUnlock: () -> Unit, app: KakaApplication, onUseBiometrics:
                     ),
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
                         onDone = {
-                            val plaintextPin = app.preferences.appPin.value
-                            val hash = app.preferences.appPinHash.value
-                            val salt = app.preferences.appPinSalt.value
-                            val iter = app.preferences.appPinIterations.value
-                            
-                            var isValid = false
-                            if (plaintextPin.isNotEmpty() && pinInput == plaintextPin) {
-                                isValid = true
-                            } else if (hash.isNotEmpty() && pinInput.length >= 4) {
-                                isValid = CryptoUtils.verifyPin(pinInput, hash, salt, iter)
-                            }
-                            
-                            if (isValid) {
-                                onUnlock()
-                            } else {
-                                error = true
-                                val attempts = app.preferences.lockoutAttempts.value + 1
-                                app.preferences.setLockoutAttempts(attempts)
-                                if (attempts >= 5) {
-                                    val backoff = Math.pow(2.0, (attempts - 5).toDouble()).toLong() * 30_000L
-                                    app.preferences.setLockoutUntil(System.currentTimeMillis() + backoff)
+                            if (isVerifying) return@KeyboardActions
+                            isVerifying = true
+                            coroutineScope.launch {
+                                val plaintextPin = app.preferences.appPin.value
+                                val hash = app.preferences.appPinHash.value
+                                val salt = app.preferences.appPinSalt.value
+                                val iter = app.preferences.appPinIterations.value
+                                
+                                var isValid = false
+                                if (plaintextPin.isNotEmpty() && pinInput == plaintextPin) {
+                                    isValid = true
+                                } else if (hash.isNotEmpty() && pinInput.length >= 4) {
+                                    isValid = withContext(Dispatchers.Default) {
+                                        CryptoUtils.verifyPin(pinInput, hash, salt, iter)
+                                    }
                                 }
-                                pinInput = ""
+                                
+                                if (isValid) {
+                                    onUnlock()
+                                } else {
+                                    error = true
+                                    val attempts = app.preferences.lockoutAttempts.value + 1
+                                    app.preferences.setLockoutAttempts(attempts)
+                                    if (attempts >= 5) {
+                                        val backoff = Math.pow(2.0, (attempts - 5).toDouble()).toLong() * 30_000L
+                                        app.preferences.setLockoutUntil(System.currentTimeMillis() + backoff)
+                                    }
+                                    pinInput = ""
+                                }
+                                isVerifying = false
                             }
                         }
                     ),

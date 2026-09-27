@@ -24,7 +24,11 @@ class Converters {
 
     @TypeConverter
     fun toAccountType(value: String): AccountType =
-        runCatching { AccountType.valueOf(value) }.getOrDefault(AccountType.CASH)
+        try {
+            AccountType.valueOf(value)
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("Unknown AccountType: $value")
+        }
 
     // ── CategoryType ────────────────────────────────────────────────────
 

@@ -76,7 +76,7 @@ object ImportReader {
                 return if (isV3) {
                     com.projectkaka.inventory.model.Money(obj.optLong(key, 0L))
                 } else {
-                    com.projectkaka.inventory.model.Money((obj.optDouble(key, 0.0) * 100).toLong())
+                    com.projectkaka.inventory.model.Money.fromDouble(obj.optDouble(key, 0.0))
                 }
             }
 
@@ -207,6 +207,12 @@ object ImportReader {
                             db.financeDao().insertLedgerEntry(le)
                             ledgerEntriesRestored++
                         }
+                    }
+
+                    // Recalculate balances for all accounts after bulk import
+                    val allAccounts = db.financeDao().getAllAccountsSnapshot()
+                    allAccounts.forEach { account ->
+                        db.financeDao().recalculateAccountBalance(account.id)
                     }
                 }
             }

@@ -11,28 +11,10 @@ data class ParsedInventoryQuery(
     val filters: List<String>
 )
 
-/**
- * Raw parsed `f/` command.  Alias resolution (token → DB entity) happens
- * in the ViewModel / Repository — the parser only tokenises.
- *
- * [isCredit] is `true` when the sign is `+` (income), `false` for `-` or
- * no sign (expense — the common case for a student).
- */
-data class FinancialCommand(
-    val amount: Double,
-    val isCredit: Boolean,
-    val accountToken: String?,
-    val categoryToken: String?,
-    val note: String
-)
+
 
 sealed interface ParseResult {
     data class Success(val value: ParsedInventoryQuery) : ParseResult
-    data class Financial(val command: FinancialCommand) : ParseResult
-    data class Action(val actionType: String) : ParseResult
-    data class InitAccount(val accountAlias: String, val amount: Double) : ParseResult
-    data class AlterAccount(val accountAlias: String, val newName: String) : ParseResult
-    data class DeleteAccount(val accountAlias: String) : ParseResult
     data class Error(val message: String) : ParseResult
 }
 
@@ -48,17 +30,8 @@ sealed interface ParseResult {
  *   m/none         has no care tasks at all
  *   s/sold         item status is SOLD      (also s/donated, s/trashed, s/active)
  *
- * Terminal commands:
- *   f/ [amount] [account] [category] [note]   — financial entry
- *   init/ [account] [amount]                  — initialize account balance
- *   alter/ [account] [newname]                — rename an account
- *   delete/ [account]                         — delete an account
- *   credit/ [amount] [account] [category]     — shorthand for f/ +amount
- *   debit/ [amount] [account] [category]      — shorthand for f/ -amount
- *   kaka show graph                           — open analytics
- *   kaka show alias                           — open terminal manual
- *   kaka ledger                               — open ledger
- *   /help                                     — show available commands
+ *
+ * The search bar is read-only. Terminal commands (f/, init/, delete/, etc.) are not supported.
  *
  * SECURITY: no token value is ever concatenated into the SQL string. Values travel
  * as bound arguments; the only interpolated fragments are column names and enum
@@ -73,79 +46,24 @@ object MagicInputParser {
 
     fun parse(
         input: String,
-        knownAccounts: Set<String> = emptySet(),
-        knownCategories: Set<String> = emptySet(),
         now: Long = System.currentTimeMillis()
     ): ParseResult {
         val trimmed = input.trim()
 
-        // ── Financial command: f/ -120 bkash lunch [note] ───────────────
-        if (trimmed.startsWith("f/", ignoreCase = true)) {
-            return parseFinancial(trimmed.substring(2).trim(), knownAccounts, knownCategories, null)
-        }
-        
-        // ── Credit shorthand: credit/ 500 bkash salary ───────────────
-        if (trimmed.startsWith("credit/", ignoreCase = true)) {
-            val body = trimmed.substring(7).trim()
-            if (body.isBlank()) return ParseResult.Error("Usage: credit/ [amount] [account] [category]")
-            return parseFinancial(body, knownAccounts, knownCategories, true)
-        }
-        
-        // ── Debit shorthand: debit/ 500 cash food ───────────────
-        if (trimmed.startsWith("debit/", ignoreCase = true)) {
-            val body = trimmed.substring(6).trim()
-            if (body.isBlank()) return ParseResult.Error("Usage: debit/ [amount] [account] [category]")
-            return parseFinancial(body, knownAccounts, knownCategories, false)
-        }
-        
-        // ── Action commands ───────────────
-        if (trimmed.equals("kaka show graph", ignoreCase = true)) {
-            return ParseResult.Action("show_graph")
-        }
-        if (trimmed.equals("kaka show alias", ignoreCase = true)) {
-            return ParseResult.Action("show_alias")
-        }
-        if (trimmed.equals("kaka ledger", ignoreCase = true)) {
-            return ParseResult.Action("ledger")
-        }
-        if (trimmed.equals("kaka export", ignoreCase = true)) {
-            return ParseResult.Action("export")
-        }
-        
-        // ── Help command ───────────────
-        if (trimmed.equals("/help", ignoreCase = true) || trimmed.equals("help", ignoreCase = true)) {
-            return ParseResult.Action("show_alias")
-        }
-        
-        // ── Init command ───────────────
-        if (trimmed.startsWith("init/", ignoreCase = true)) {
-            val parts = trimmed.substring(5).trim().split("\\s+".toRegex())
-            if (parts.size >= 2) {
-                val accountAlias = parts[0]
-                val amount = parts[1].toDoubleOrNull()
-                if (amount != null) {
-                    return ParseResult.InitAccount(accountAlias, amount)
-                }
-            }
-            return ParseResult.Error("Usage: init/ [account] [amount]")
-        }
-        
-        // ── Alter command: rename an account ───────────────
-        if (trimmed.startsWith("alter/", ignoreCase = true)) {
-            val parts = trimmed.substring(6).trim().split("\\s+".toRegex(), limit = 2)
-            if (parts.size >= 2 && parts[1].isNotBlank()) {
-                return ParseResult.AlterAccount(parts[0], parts[1])
-            }
-            return ParseResult.Error("Usage: alter/ [account] [new_name]")
-        }
-        
-        // ── Delete command: delete an account ───────────────
-        if (trimmed.startsWith("delete/", ignoreCase = true)) {
-            val alias = trimmed.substring(7).trim()
-            if (alias.isNotBlank()) {
-                return ParseResult.DeleteAccount(alias)
-            }
-            return ParseResult.Error("Usage: delete/ [account]")
+        if (trimmed.startsWith("f/", ignoreCase = true) ||
+            trimmed.startsWith("credit/", ignoreCase = true) ||
+            trimmed.startsWith("debit/", ignoreCase = true) ||
+            trimmed.startsWith("init/", ignoreCase = true) ||
+            trimmed.startsWith("alter/", ignoreCase = true) ||
+            trimmed.startsWith("delete/", ignoreCase = true) ||
+            trimmed.startsWith("account/", ignoreCase = true) ||
+            trimmed.startsWith("xfer/", ignoreCase = true) ||
+            trimmed.startsWith("due/", ignoreCase = true) ||
+            trimmed.startsWith("settle/", ignoreCase = true) ||
+            trimmed.startsWith("kaka ", ignoreCase = true) ||
+            trimmed.equals("/help", ignoreCase = true) || 
+            trimmed.equals("help", ignoreCase = true)) {
+            return ParseResult.Error("The search bar is read-only. Use the Terminal for commands.")
         }
 
         val tokens = tokenize(trimmed)
@@ -287,10 +205,7 @@ object MagicInputParser {
     }
 
     /** Escapes SQLite LIKE metacharacters so user text cannot act as a wildcard. */
-    private fun escapeLike(value: String): String = value
-        .replace("\\", "\\\\")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
+    private fun escapeLike(value: String): String = com.projectkaka.inventory.util.SearchHelper.escapeLike(value)
 
     private fun unquote(value: String): String =
         if (value.length >= 2 &&
@@ -338,97 +253,5 @@ object MagicInputParser {
 
     private data class Clause(val sql: String, val argument: Any?)
 
-    // ════════════════════════════════════════════════════════════════════
-    //  f/ — Financial command parser
-    // ════════════════════════════════════════════════════════════════════
 
-    private fun parseFinancial(
-        input: String,
-        knownAccounts: Set<String>,
-        knownCategories: Set<String>,
-        forceCredit: Boolean?
-    ): ParseResult {
-        if (input.isBlank()) {
-            return ParseResult.Error(
-                "Usage: f/ 120 bkash lunch [note]\n" +
-                    "  −amount = expense  •  +amount = income"
-            )
-        }
-
-        val tokens = tokenize(input)
-        if (tokens.isEmpty()) return ParseResult.Error("Usage: f/ [amount] [account] [category]")
-
-        var amount: Double? = null
-        var isCredit = false
-        var amountTokenIndex = -1
-
-        for ((index, token) in tokens.withIndex()) {
-            val rawNumber = token.removePrefix("+").removePrefix("-")
-            val parsed = rawNumber.toDoubleOrNull()
-            if (parsed != null && parsed > 0.0 && !parsed.isNaN() && !parsed.isInfinite()) {
-                amount = parsed
-                isCredit = forceCredit ?: token.startsWith("+")
-                amountTokenIndex = index
-                break
-            }
-        }
-
-        if (amount == null) {
-            return ParseResult.Error("Amount missing or invalid.")
-        }
-
-        val remainingTokens = tokens.filterIndexed { index, _ -> index != amountTokenIndex }
-        
-        val matchedAccounts = mutableListOf<String>()
-        val matchedCategories = mutableListOf<String>()
-        val unassignedTokens = mutableListOf<String>()
-        
-        for (token in remainingTokens) {
-            val lowerToken = token.lowercase()
-            val isAcc = knownAccounts.contains(lowerToken)
-            val isCat = knownCategories.contains(lowerToken)
-            
-            if (isAcc && isCat) {
-                return ParseResult.Error("Ambiguous alias: '$token' is both an account and category.")
-            }
-            if (isAcc) {
-                matchedAccounts.add(token)
-            } else if (isCat) {
-                matchedCategories.add(token)
-            } else {
-                unassignedTokens.add(token)
-            }
-        }
-        
-        val isInit = remainingTokens.any { it.equals("init", ignoreCase = true) }
-        if (isInit && matchedAccounts.size == 1) {
-            return ParseResult.InitAccount(matchedAccounts[0], amount)
-        }
-
-        if (matchedAccounts.size > 1) {
-            return ParseResult.Error("Ambiguous accounts: ${matchedAccounts.joinToString(", ")}. Only one account allowed.")
-        }
-        if (matchedCategories.size > 1) {
-            return ParseResult.Error("Ambiguous categories: ${matchedCategories.joinToString(", ")}. Only one category allowed.")
-        }
-        
-        val accountToken = matchedAccounts.firstOrNull()
-        val categoryToken = matchedCategories.firstOrNull()
-        
-        if (accountToken == null && categoryToken == null) {
-            return ParseResult.Error("Could not recognize any account or category. Please specify at least one.")
-        }
-
-        val note = unassignedTokens.filter { !it.equals("init", ignoreCase = true) }.joinToString(" ").trim()
-
-        return ParseResult.Financial(
-            FinancialCommand(
-                amount = amount,
-                isCredit = isCredit,
-                accountToken = accountToken,
-                categoryToken = categoryToken,
-                note = note
-            )
-        )
-    }
 }

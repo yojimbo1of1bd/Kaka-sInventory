@@ -90,7 +90,7 @@ fun ExportScreen(
             Button(
                 onClick = { 
                     if (!permStorage) {
-                        android.widget.Toast.makeText(context, "Storage & Media permission disabled in Settings", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "Storage & Media disabled. Enable in Settings -> Privacy.", android.widget.Toast.LENGTH_LONG).show()
                     } else {
                         viewModel.exportCsv() 
                     }
@@ -108,7 +108,7 @@ fun ExportScreen(
             OutlinedButton(
                 onClick = { 
                     if (!permStorage) {
-                        android.widget.Toast.makeText(context, "Storage & Media permission disabled in Settings", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "Storage & Media disabled. Enable in Settings -> Privacy.", android.widget.Toast.LENGTH_LONG).show()
                     } else {
                         viewModel.exportJson() 
                     }
@@ -122,7 +122,7 @@ fun ExportScreen(
             Button(
                 onClick = { 
                     if (!permStorage) {
-                        android.widget.Toast.makeText(context, "Storage & Media permission disabled in Settings", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "Storage & Media disabled. Enable in Settings -> Privacy.", android.widget.Toast.LENGTH_LONG).show()
                     } else {
                         viewModel.exportKakaZip() 
                     }
@@ -140,7 +140,7 @@ fun ExportScreen(
             OutlinedButton(
                 onClick = { 
                     if (!permStorage) {
-                        android.widget.Toast.makeText(context, "Storage & Media permission disabled in Settings", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "Storage & Media disabled. Enable in Settings -> Privacy.", android.widget.Toast.LENGTH_LONG).show()
                     } else {
                         filePickerLauncher.launch("*/*") 
                     }

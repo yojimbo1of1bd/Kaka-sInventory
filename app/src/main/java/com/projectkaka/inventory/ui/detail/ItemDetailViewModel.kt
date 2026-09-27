@@ -77,7 +77,7 @@ class ItemDetailViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun liquidate(item: ItemEntity, status: ItemStatus, recovered: Double) {
-        viewModelScope.launch { repository.liquidateItem(item.id, status, com.projectkaka.inventory.model.Money((recovered * 100).toLong())) }
+        viewModelScope.launch { repository.liquidateItem(item.id, status, com.projectkaka.inventory.model.Money.fromDouble(recovered)) }
     }
 
     fun deleteItem() {

@@ -46,6 +46,9 @@ data class LedgerEntryEntity(
     @ColumnInfo(name = "note")
     val note: String = "",
 
+    @ColumnInfo(name = "aliases")
+    val aliases: String = "",
+
     @ColumnInfo(name = "due_date")
     val dueDate: Long? = null,
 
@@ -57,4 +60,9 @@ data class LedgerEntryEntity(
 
     @ColumnInfo(name = "created_at")
     val createdAt: Long = System.currentTimeMillis()
-)
+) {
+    /** Returns true if [input] (lowercased) matches the contactName or any alias. */
+    fun matchesInput(input: String): Boolean {
+        return com.projectkaka.inventory.util.SearchHelper.matchesAlias(input, contactName, aliases)
+    }
+}
