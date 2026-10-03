@@ -17,5 +17,11 @@ enum class AccountType {
     LIABILITY,
 
     /** Owner equity / savings set aside.  Excluded from daily budget. */
-    CAPITAL
+    CAPITAL,
+
+    /** Income / Revenue. Excluded from daily budget. */
+    REVENUE,
+
+    /** Expenses / Costs. Excluded from daily budget. */
+    EXPENSE
 }

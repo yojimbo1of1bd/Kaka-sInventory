@@ -41,8 +41,13 @@ object Routes {
     const val ACCOUNTS_MANAGER = "accounts_manager"
     const val EMERGENCY_CONTACT = "emergency_contact"
     const val ITEM_DETAIL = "item/{itemId}"
+    const val STATEMENTS = "statements"
+    const val BASKETS = "baskets"
+    const val BASKET_DETAIL = "basket/{basketId}"
+    const val BOX_SCANNER = "box_scanner"
 
     fun itemDetail(itemId: Int) = "item/$itemId"
+    fun basketDetail(basketId: Int) = "basket/$basketId"
 }
 
 @Composable
@@ -58,11 +63,6 @@ fun KakaApp() {
     val emergencyContactNumber by preferences.emergencyContactNumber.collectAsState()
     val emergencyContactRelation by preferences.emergencyContactRelation.collectAsState()
     val emergencyContactAvatar by preferences.emergencyContactAvatar.collectAsState()
-    val showQuickLog by preferences.showQuickLog.collectAsState()
-    val defaultQuickLogDebitAccount by preferences.defaultQuickLogDebitAccount.collectAsState()
-    val defaultQuickLogDebitCategory by preferences.defaultQuickLogDebitCategory.collectAsState()
-    val defaultQuickLogCreditAccount by preferences.defaultQuickLogCreditAccount.collectAsState()
-    val defaultQuickLogCreditCategory by preferences.defaultQuickLogCreditCategory.collectAsState()
     val userName by preferences.userName.collectAsState()
     val alertsEnabled by preferences.alertsEnabled.collectAsState()
     val alertMethod by preferences.alertMethod.collectAsState()
@@ -71,6 +71,7 @@ fun KakaApp() {
     val permSmsCalls by preferences.permSmsCalls.collectAsState()
     val permMicrophone by preferences.permMicrophone.collectAsState()
     val permStorage by preferences.permStorage.collectAsState()
+    val businessMode by preferences.businessMode.collectAsState()
     
     val isDark = when (themeMode) {
         ThemeMode.LIGHT -> false
@@ -107,7 +108,8 @@ fun KakaApp() {
                     onOpenItem = { itemId -> navController.navigate(Routes.itemDetail(itemId)) },
                     onOpenGraph = { navController.navigate(Routes.GRAPH) },
                     onOpenAlias = { navController.navigate(Routes.ALIAS) },
-                    onOpenLedger = { navController.navigate(Routes.LEDGER) }
+                    onOpenLedger = { navController.navigate(Routes.LEDGER) },
+                    onOpenStatements = { navController.navigate(Routes.STATEMENTS) }
                 )
             }
 
@@ -143,14 +145,6 @@ fun KakaApp() {
                             preferences.clearPlaintextAppPin()
                         }
                     },
-                    showQuickLog = showQuickLog,
-                    onShowQuickLogChange = { preferences.setShowQuickLog(it) },
-                    defaultDebitAcc = defaultQuickLogDebitAccount,
-                    defaultDebitCat = defaultQuickLogDebitCategory,
-                    onDefaultDebitChange = { acc, cat -> preferences.setDefaultQuickLogDebit(acc, cat) },
-                    defaultCreditAcc = defaultQuickLogCreditAccount,
-                    defaultCreditCat = defaultQuickLogCreditCategory,
-                    onDefaultCreditChange = { acc, cat -> preferences.setDefaultQuickLogCredit(acc, cat) },
                     alertsEnabled = alertsEnabled,
                     onAlertsEnabledChange = { preferences.setAlertsEnabled(it) },
                     alertMethod = alertMethod,
@@ -165,10 +159,12 @@ fun KakaApp() {
                     onPermMicrophoneChange = { preferences.setPermissionEnabled("perm_microphone", it) },
                     permStorage = permStorage,
                     onPermStorageChange = { preferences.setPermissionEnabled("perm_storage", it) },
+                    businessMode = businessMode,
+                    onBusinessModeChange = { preferences.setBusinessMode(it) },
                     onOpenAccounts = { navController.navigate(Routes.ACCOUNTS_MANAGER) },
                     onOpenEmergencyContact = { navController.navigate(Routes.EMERGENCY_CONTACT) },
                     onOpenExport = { navController.navigate(Routes.EXPORT) },
-                    onOpenTerminal = { navController.navigate(Routes.ALIAS) },
+                    onOpenBaskets = { navController.navigate(Routes.BASKETS) },
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -208,11 +204,62 @@ fun KakaApp() {
             }
 
             composable(Routes.ALIAS) {
-                AliasGuideScreen(onBack = { navController.popBackStack() })
+                AliasGuideScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenGraph = { navController.navigate(Routes.GRAPH) },
+                    onOpenLedger = { navController.navigate(Routes.LEDGER) },
+                    onOpenExport = { navController.navigate(Routes.EXPORT) },
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    onOpenAccounts = { navController.navigate(Routes.ACCOUNTS_MANAGER) },
+                    onOpenStatements = { navController.navigate(Routes.STATEMENTS) }
+                )
             }
 
             composable(Routes.LEDGER) {
                 LedgerScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable(Routes.STATEMENTS) {
+                com.projectkaka.inventory.ui.reports.StatementsScreen(
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(Routes.BASKETS) {
+                com.projectkaka.inventory.ui.basket.BasketsScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenBasket = { basketId ->
+                        navController.navigate(Routes.basketDetail(basketId))
+                    },
+                    onOpenScanner = {
+                        navController.navigate(Routes.BOX_SCANNER)
+                    }
+                )
+            }
+
+            composable(
+                route = Routes.BASKET_DETAIL,
+                arguments = listOf(navArgument("basketId") { type = NavType.IntType })
+            ) { backStackEntry ->
+                val basketId = backStackEntry.arguments?.getInt("basketId") ?: return@composable
+                com.projectkaka.inventory.ui.basket.BasketDetailScreen(
+                    basketId = basketId,
+                    onBack = { navController.popBackStack() },
+                    onOpenItemDetail = { itemId ->
+                        navController.navigate(Routes.itemDetail(itemId))
+                    }
+                )
+            }
+
+            composable(Routes.BOX_SCANNER) {
+                com.projectkaka.inventory.ui.basket.BoxScannerScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenBasket = { basketId ->
+                        navController.navigate(Routes.basketDetail(basketId)) {
+                            popUpTo(Routes.BOX_SCANNER) { inclusive = true }
+                        }
+                    }
+                )
             }
         }
     }

@@ -36,10 +36,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val FILTER_HINTS = listOf(
-    "f/ -500 cash food" to "expense",
-    "f/ +200 bkash salary" to "income",
-    "kaka show graph" to "analytics",
-    "kaka ledger" to "ledger"
+    "c/electronics" to "category",
+    "c/prescriptions" to "documents",
+    "l/bedroom" to "location",
+    "v/>500" to "value",
+    "m/due" to "maintenance"
 )
 
 // ── Fixed colors for the white search bar ──
@@ -99,7 +100,7 @@ fun MagicInputBar(
             ) {
                 if (query.isEmpty()) {
                     Text(
-                        text = "f/ -500 cash food  •  kaka show graph",
+                        text = "Search items, c/category, l/location...",
                         color = SearchBarHint,
                         fontSize = 13.sp,
                         maxLines = 1

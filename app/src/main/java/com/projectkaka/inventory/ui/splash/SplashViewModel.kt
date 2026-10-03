@@ -40,8 +40,14 @@ class SplashViewModel(application: Application) : AndroidViewModel(application) 
 
                 _uiState.value = SplashUiState.Loading(0.65f, "Initializing SQLite WAL Engine...")
                 withContext(Dispatchers.IO) { app.database.openHelper.writableDatabase.version }
-                delay(400)
+                delay(100)
 
+                _uiState.value = SplashUiState.Loading(0.85f, "Reconciling financial balances...")
+                val repaired = withContext(Dispatchers.IO) { app.financeRepository.reconcileBalances() }
+                if (repaired > 0) {
+                    delay(300) // Give user a chance to see that a repair happened
+                }
+                
                 _uiState.value = SplashUiState.Loading(1.0f, "Ready!")
                 delay(250)
                 _uiState.value = SplashUiState.Ready

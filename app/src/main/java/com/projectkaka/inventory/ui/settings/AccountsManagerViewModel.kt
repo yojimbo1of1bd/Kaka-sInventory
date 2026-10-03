@@ -9,7 +9,7 @@ import com.projectkaka.inventory.data.local.entity.AccountType
 import com.projectkaka.inventory.model.Money
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -21,27 +21,46 @@ data class AccountsManagerUiState(
 class AccountsManagerViewModel(application: Application) : AndroidViewModel(application) {
     private val financeRepo = getApplication<KakaApplication>().financeRepository
 
-    val uiState: StateFlow<AccountsManagerUiState> = financeRepo.observeAccountsWithCounts()
-        .map { accounts ->
-            AccountsManagerUiState(
-                accountsWithCounts = accounts,
-                isLoading = false
-            )
+    private val preferences = getApplication<KakaApplication>().preferences
+
+    val uiState: StateFlow<AccountsManagerUiState> = combine(
+        financeRepo.observeAccountsWithCounts(),
+        preferences.businessMode
+    ) { accounts, businessMode ->
+        val filtered = if (businessMode) {
+            accounts
+        } else {
+            accounts.filter {
+                val n = it.account.name.lowercase()
+                n != "prepaid expenses" && n != "unearned revenue" && n != "accounts receivable" && n != "accounts payable"
+            }
         }
+        AccountsManagerUiState(
+            accountsWithCounts = filtered,
+            isLoading = false
+        )
+    }
         .stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5000),
             AccountsManagerUiState()
         )
 
-    fun createAccount(name: String, type: AccountType, initialBalance: Double) {
+    fun createAccount(name: String, type: AccountType, initialBalanceStr: String, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
+            val balance = try {
+                Money.fromDecimalString(initialBalanceStr)
+            } catch (e: Exception) {
+                onResult(false, "Invalid initial balance format.")
+                return@launch
+            }
             val acc = com.projectkaka.inventory.data.local.entity.AccountEntity(
                 name = name.trim().replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() },
                 type = type,
-                openingBalance = Money.fromDouble(initialBalance)
+                openingBalance = balance
             )
             financeRepo.insertAccount(acc)
+            onResult(true, "Account created successfully.")
         }
     }
 
@@ -71,11 +90,20 @@ class AccountsManagerViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
-    fun updateOpeningBalance(accountId: Int, newBalance: Double) {
+    fun updateOpeningBalance(accountId: Int, newBalanceStr: String, onResult: (Boolean, String) -> Unit) {
         viewModelScope.launch {
+            val balance = try {
+                Money.fromDecimalString(newBalanceStr)
+            } catch (e: Exception) {
+                onResult(false, "Invalid balance format.")
+                return@launch
+            }
             val account = uiState.value.accountsWithCounts.find { it.account.id == accountId }?.account
             if (account != null) {
-                financeRepo.updateAccount(account.copy(openingBalance = Money.fromDouble(newBalance)))
+                financeRepo.updateAccount(account.copy(openingBalance = balance))
+                onResult(true, "Balance updated successfully.")
+            } else {
+                onResult(false, "Account not found.")
             }
         }
     }

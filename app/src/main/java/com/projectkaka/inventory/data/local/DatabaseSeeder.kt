@@ -82,7 +82,14 @@ object DatabaseSeeder {
             Seed("Assets",      AccountType.ASSET,     "assets,sompod,property"),
             Seed("Liabilities", AccountType.LIABILITY, "liabilities,daya,dhyan"),
             Seed("Capital",     AccountType.CAPITAL,   "capital,equity,muldon"),
-            Seed("Cash",        AccountType.CASH,      "cash")
+            Seed("Cash",        AccountType.CASH,      "cash"),
+            Seed("Sales Revenue", AccountType.REVENUE, "sales,bichal"),
+            Seed("COGS",        AccountType.EXPENSE,   "cogs,cost of goods sold"),
+            Seed("Inventory",   AccountType.ASSET,     "inventory,stock,mala"),
+            Seed("Charity Expense", AccountType.EXPENSE, "charity,zakat,sadaqah"),
+            Seed("Loss",        AccountType.EXPENSE,   "loss,lokshan"),
+            Seed("Prepaid Expenses", AccountType.ASSET, "prepaid,advance"),
+            Seed("Unearned Revenue", AccountType.LIABILITY, "unearned,advance_income")
         )
 
         accounts.forEach { acct ->

@@ -63,6 +63,12 @@ interface FinanceDao {
     @Delete
     suspend fun deleteAccount(account: AccountEntity)
 
+    @Query("SELECT COUNT(*) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = :accountId AND j.status = 'POSTED'")
+    suspend fun getTransactionCountForAccount(accountId: Int): Int
+
+    @Query("SELECT COUNT(*) FROM ledger_entries WHERE account_id = :accountId")
+    suspend fun getLedgerCountForAccount(accountId: Int): Int
+
     @Query("SELECT * FROM accounts ORDER BY name ASC")
     fun getAllAccounts(): Flow<List<AccountEntity>>
 
@@ -71,7 +77,7 @@ interface FinanceDao {
 
     @Query("""
         SELECT a.*, 
-               (SELECT COUNT(*) FROM financial_transactions t WHERE t.account_id = a.id) AS transaction_count,
+               (SELECT COUNT(*) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = a.id AND j.status = 'POSTED') AS transaction_count,
                (SELECT COUNT(*) FROM ledger_entries l WHERE l.account_id = a.id) AS ledger_link_count
         FROM accounts a
         ORDER BY a.name ASC
@@ -119,14 +125,22 @@ interface FinanceDao {
 
     /**
      * Recalculate and update the stored balance for a specific account.
-     * Call this inside a transaction whenever related financial_transactions change.
+     * Uses double-entry rules: 
+     * Assets/Expenses normally have debit balances.
+     * Liabilities/Equity/Revenue normally have credit balances.
      */
     @Query(
         """
         UPDATE accounts
         SET balance_minor = opening_balance + 
-            COALESCE((SELECT SUM(amount) FROM financial_transactions WHERE account_id = accounts.id AND is_credit = 1), 0) - 
-            COALESCE((SELECT SUM(amount) FROM financial_transactions WHERE account_id = accounts.id AND is_credit = 0), 0)
+            CASE 
+                WHEN type IN ('CASH', 'ASSET', 'EXPENSE') THEN 
+                    COALESCE((SELECT SUM(amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = accounts.id AND p.is_credit = 0 AND j.status = 'POSTED'), 0) - 
+                    COALESCE((SELECT SUM(amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = accounts.id AND p.is_credit = 1 AND j.status = 'POSTED'), 0)
+                ELSE 
+                    COALESCE((SELECT SUM(amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = accounts.id AND p.is_credit = 1 AND j.status = 'POSTED'), 0) - 
+                    COALESCE((SELECT SUM(amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = accounts.id AND p.is_credit = 0 AND j.status = 'POSTED'), 0)
+            END
         WHERE id = :accountId
         """
     )
@@ -141,8 +155,8 @@ interface FinanceDao {
         SELECT a.*
         FROM accounts a
         WHERE a.balance_minor != (a.opening_balance + 
-            COALESCE((SELECT SUM(t.amount) FROM financial_transactions t WHERE t.account_id = a.id AND t.is_credit = 1), 0) - 
-            COALESCE((SELECT SUM(t.amount) FROM financial_transactions t WHERE t.account_id = a.id AND t.is_credit = 0), 0))
+            COALESCE((SELECT SUM(p.amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = a.id AND p.is_credit = 1 AND j.status = 'POSTED'), 0) - 
+            COALESCE((SELECT SUM(p.amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = a.id AND p.is_credit = 0 AND j.status = 'POSTED'), 0))
         """
     )
     suspend fun getAccountsWithMismatchedBalances(): List<AccountEntity>
@@ -180,60 +194,128 @@ interface FinanceDao {
     //  TRANSACTIONS
     // ════════════════════════════════════════════════════════════════════
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertTransaction(transaction: TransactionEntity): Long
-
-    @androidx.room.Transaction
-    suspend fun executeTransfer(
-        fromAccountId: Int,
-        toAccountId: Int,
-        amount: Money,
-        note: String,
-        transferId: String,
-        timestamp: Long
-    ) {
-        insertTransaction(TransactionEntity(amount = amount, accountId = fromAccountId, categoryId = null, transferId = transferId, counterAccountId = toAccountId, type = com.projectkaka.inventory.data.local.entity.TransactionType.TRANSFER, isCredit = false, note = note, timestamp = timestamp))
-        insertTransaction(TransactionEntity(amount = amount, accountId = toAccountId, categoryId = null, transferId = transferId, counterAccountId = fromAccountId, type = com.projectkaka.inventory.data.local.entity.TransactionType.TRANSFER, isCredit = true, note = note, timestamp = timestamp))
-    }
-
-    @Query("DELETE FROM financial_transactions WHERE transfer_id = :transferId")
-    suspend fun deleteTransfer(transferId: String)
-
-    @Query("SELECT * FROM financial_transactions WHERE transfer_id = :transferId")
-    suspend fun getTransactionsByTransferId(transferId: String): List<TransactionEntity>
-
-    @Delete
-    suspend fun deleteTransaction(transaction: TransactionEntity)
-
-    @Query("SELECT * FROM financial_transactions WHERE id = :id LIMIT 1")
+    @Query("""
+        SELECT 
+          p.id AS id,
+          p.amount AS amount,
+          p.account_id AS account_id,
+          NULL AS category_id,
+          CAST(j.id AS TEXT) AS transfer_id, 
+          NULL AS counter_account_id,
+          CASE 
+            WHEN a.type = 'EXPENSE' THEN 'EXPENSE'
+            WHEN a.type = 'REVENUE' THEN 'INCOME'
+            ELSE 'TRANSFER'
+          END AS type,
+          p.is_credit AS is_credit,
+          p.note AS note,
+          j.timestamp AS timestamp
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE j.status = 'POSTED' AND p.id = :id
+        LIMIT 1
+    """)
     suspend fun getTransactionById(id: Int): TransactionEntity?
 
-    @Query("SELECT * FROM financial_transactions ORDER BY timestamp DESC")
+    @Query("""
+        SELECT 
+          p.id AS id,
+          p.amount AS amount,
+          p.account_id AS account_id,
+          NULL AS category_id,
+          CAST(j.id AS TEXT) AS transfer_id, 
+          NULL AS counter_account_id,
+          CASE 
+            WHEN a.type = 'EXPENSE' THEN 'EXPENSE'
+            WHEN a.type = 'REVENUE' THEN 'INCOME'
+            ELSE 'TRANSFER'
+          END AS type,
+          p.is_credit AS is_credit,
+          p.note AS note,
+          j.timestamp AS timestamp
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE j.status = 'POSTED'
+        ORDER BY j.timestamp DESC
+    """)
     fun getAllTransactions(): Flow<List<TransactionEntity>>
 
     @Query(
         """
-        SELECT * FROM financial_transactions
-        WHERE timestamp BETWEEN :startMs AND :endMs
-        ORDER BY timestamp DESC
+        SELECT 
+          p.id AS id,
+          p.amount AS amount,
+          p.account_id AS account_id,
+          NULL AS category_id,
+          CAST(j.id AS TEXT) AS transfer_id, 
+          NULL AS counter_account_id,
+          CASE 
+            WHEN a.type = 'EXPENSE' THEN 'EXPENSE'
+            WHEN a.type = 'REVENUE' THEN 'INCOME'
+            ELSE 'TRANSFER'
+          END AS type,
+          p.is_credit AS is_credit,
+          p.note AS note,
+          j.timestamp AS timestamp
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE j.status = 'POSTED' AND j.timestamp BETWEEN :startMs AND :endMs
+        ORDER BY j.timestamp DESC
         """
     )
     fun getTransactionsInRange(startMs: Long, endMs: Long): Flow<List<TransactionEntity>>
 
     @Query(
         """
-        SELECT * FROM financial_transactions
-        WHERE account_id = :accountId
-        ORDER BY timestamp DESC
+        SELECT 
+          p.id AS id,
+          p.amount AS amount,
+          p.account_id AS account_id,
+          NULL AS category_id,
+          CAST(j.id AS TEXT) AS transfer_id, 
+          NULL AS counter_account_id,
+          CASE 
+            WHEN a.type = 'EXPENSE' THEN 'EXPENSE'
+            WHEN a.type = 'REVENUE' THEN 'INCOME'
+            ELSE 'TRANSFER'
+          END AS type,
+          p.is_credit AS is_credit,
+          p.note AS note,
+          j.timestamp AS timestamp
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE j.status = 'POSTED' AND p.account_id = :accountId
+        ORDER BY j.timestamp DESC
         """
     )
     fun getTransactionsForAccount(accountId: Int): Flow<List<TransactionEntity>>
 
     @Query(
         """
-        SELECT * FROM financial_transactions
-        WHERE category_id = :categoryId
-        ORDER BY timestamp DESC
+        SELECT 
+          p.id AS id,
+          p.amount AS amount,
+          p.account_id AS account_id,
+          NULL AS category_id,
+          CAST(j.id AS TEXT) AS transfer_id, 
+          NULL AS counter_account_id,
+          CASE 
+            WHEN a.type = 'EXPENSE' THEN 'EXPENSE'
+            WHEN a.type = 'REVENUE' THEN 'INCOME'
+            ELSE 'TRANSFER'
+          END AS type,
+          p.is_credit AS is_credit,
+          p.note AS note,
+          j.timestamp AS timestamp
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE j.status = 'POSTED' AND p.account_id = :categoryId
+        ORDER BY j.timestamp DESC
         """
     )
     fun getTransactionsForCategory(categoryId: Int): Flow<List<TransactionEntity>>
@@ -241,8 +323,11 @@ interface FinanceDao {
     /** Day's total debit (expenses). Used for overspending detection. */
     @Query(
         """
-        SELECT COALESCE(SUM(amount), 0) FROM financial_transactions
-        WHERE is_credit = 0 AND type = 'EXPENSE' AND timestamp BETWEEN :dayStartMs AND :dayEndMs
+        SELECT COALESCE(SUM(p.amount), 0) 
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE p.is_credit = 0 AND a.type = 'EXPENSE' AND j.status = 'POSTED' AND j.timestamp BETWEEN :dayStartMs AND :dayEndMs
         """
     )
     suspend fun getDaySpending(dayStartMs: Long, dayEndMs: Long): Money
@@ -250,8 +335,11 @@ interface FinanceDao {
     /** Rolling average daily spend for the current month — used for spike detection. */
     @Query(
         """
-        SELECT COALESCE(SUM(amount), 0) FROM financial_transactions
-        WHERE is_credit = 0 AND type = 'EXPENSE' AND timestamp >= :monthStartMs
+        SELECT COALESCE(SUM(p.amount), 0) 
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE p.is_credit = 0 AND a.type = 'EXPENSE' AND j.status = 'POSTED' AND j.timestamp >= :monthStartMs
         """
     )
     fun observeMonthSpending(monthStartMs: Long): Flow<Money>
@@ -259,11 +347,12 @@ interface FinanceDao {
     /** Spending aggregated by category, for analytics charts. */
     @Query(
         """
-        SELECT fc.name AS name, COALESCE(SUM(t.amount), 0) AS total
-        FROM financial_transactions t
-        INNER JOIN financial_categories fc ON fc.id = t.category_id
-        WHERE t.is_credit = 0 AND t.type = 'EXPENSE' AND t.timestamp BETWEEN :startMs AND :endMs
-        GROUP BY t.category_id
+        SELECT a.name AS name, COALESCE(SUM(p.amount), 0) AS total
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE p.is_credit = 0 AND a.type = 'EXPENSE' AND j.status = 'POSTED' AND j.timestamp BETWEEN :startMs AND :endMs
+        GROUP BY p.account_id
         ORDER BY total DESC
         """
     )
@@ -272,32 +361,57 @@ interface FinanceDao {
     /** Income aggregated by category, for analytics charts. */
     @Query(
         """
-        SELECT fc.name AS name, COALESCE(SUM(t.amount), 0) AS total
-        FROM financial_transactions t
-        INNER JOIN financial_categories fc ON fc.id = t.category_id
-        WHERE t.is_credit = 1 AND t.type = 'INCOME' AND t.timestamp BETWEEN :startMs AND :endMs
-        GROUP BY t.category_id
+        SELECT a.name AS name, COALESCE(SUM(p.amount), 0) AS total
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE p.is_credit = 1 AND a.type = 'REVENUE' AND j.status = 'POSTED' AND j.timestamp BETWEEN :startMs AND :endMs
+        GROUP BY p.account_id
         ORDER BY total DESC
         """
     )
     fun getIncomeByCategory(startMs: Long, endMs: Long): Flow<List<CategorySpending>>
 
     /** Total transaction count — used by export screen. */
-    @Query("SELECT COUNT(*) FROM financial_transactions")
+    @Query("SELECT COUNT(DISTINCT j.id) FROM journal_entries j WHERE j.status = 'POSTED'")
     fun observeTransactionCount(): Flow<Int>
 
     /** Reactive day spending — fires when any transaction for the day changes. */
     @Query(
         """
-        SELECT COALESCE(SUM(amount), 0) FROM financial_transactions
-        WHERE is_credit = 0 AND type = 'EXPENSE' AND timestamp >= :dayStartMs AND timestamp < :dayEndMs
+        SELECT COALESCE(SUM(p.amount), 0) 
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE p.is_credit = 0 AND a.type = 'EXPENSE' AND j.status = 'POSTED' AND j.timestamp >= :dayStartMs AND j.timestamp < :dayEndMs
         """
     )
     fun observeDaySpending(dayStartMs: Long, dayEndMs: Long): Flow<Money>
 
     // ── Export read-only snapshots ───────────────────────────────────────
 
-    @Query("SELECT * FROM financial_transactions ORDER BY timestamp DESC")
+    @Query("""
+        SELECT 
+          p.id AS id,
+          p.amount AS amount,
+          p.account_id AS account_id,
+          NULL AS category_id,
+          CAST(j.id AS TEXT) AS transfer_id, 
+          NULL AS counter_account_id,
+          CASE 
+            WHEN a.type = 'EXPENSE' THEN 'EXPENSE'
+            WHEN a.type = 'REVENUE' THEN 'INCOME'
+            ELSE 'TRANSFER'
+          END AS type,
+          p.is_credit AS is_credit,
+          p.note AS note,
+          j.timestamp AS timestamp
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE j.status = 'POSTED'
+        ORDER BY j.timestamp DESC
+    """)
     suspend fun getAllTransactionsExport(): List<TransactionEntity>
 
     // ════════════════════════════════════════════════════════════════════
@@ -362,9 +476,9 @@ interface FinanceDao {
         """
         SELECT * FROM ledger_entries
         WHERE (:contactQuery IS NULL OR 
-               contact_name LIKE '%' || :contactQuery || '%' ESCAPE '\' OR 
-               aliases LIKE '%' || :contactQuery || '%' ESCAPE '\' OR 
-               contact_phone LIKE '%' || :contactQuery || '%' ESCAPE '\')
+               contact_name LIKE :contactQuery ESCAPE '\' OR 
+               aliases LIKE :contactQuery ESCAPE '\' OR 
+               contact_phone LIKE :contactQuery ESCAPE '\')
           AND (:isSettled IS NULL OR is_settled = :isSettled)
           AND (:minAmount IS NULL OR amount >= :minAmount)
           AND (:maxAmount IS NULL OR amount <= :maxAmount)

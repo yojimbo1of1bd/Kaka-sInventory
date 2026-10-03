@@ -53,70 +53,62 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.projectkaka.inventory.data.local.entity.CategoryType
 import com.projectkaka.inventory.search.TerminalResult
 
-data class TerminalLine(
-    val text: String,
-    val color: Color,
-    val isBold: Boolean = false
-)
+import com.projectkaka.inventory.ui.settings.LogType
+import com.projectkaka.inventory.ui.settings.TerminalLog
+
+// We no longer define TerminalLine here, we use TerminalLog from ViewModel
+// mapping it locally to UI colors
+@Composable
+fun TerminalLog.toColor(): Color = when (this.type) {
+    LogType.SUCCESS -> Color(0xFF39D353)
+    LogType.ERROR -> Color(0xFFFF7B72)
+    LogType.WARNING -> Color(0xFFFFBD2E)
+    LogType.INFO, LogType.HINT -> Color(0xFF8A8A8A)
+    LogType.ECHO -> Color(0xFF58A6FF)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AliasGuideScreen(
     onBack: () -> Unit,
+    onOpenGraph: () -> Unit,
+    onOpenLedger: () -> Unit,
+    onOpenExport: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenAccounts: () -> Unit,
+    onOpenStatements: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: AliasGuideViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showManual by remember { mutableStateOf(false) }
     var terminalInput by remember { mutableStateOf("") }
-    val terminalLines = remember { mutableStateListOf<TerminalLine>() }
+    val terminalLogs = state.terminalLogs
     val listState = rememberLazyListState()
 
-    // Welcome message
-    LaunchedEffect(Unit) {
-        if (terminalLines.isEmpty()) {
-            terminalLines.add(TerminalLine("Welcome to kaka terminal v1.0", Color(0xFF39D353), isBold = true))
-            terminalLines.add(TerminalLine("Type /help for available commands.", Color(0xFF8A8A8A)))
-        }
-    }
-
     // Auto-scroll to bottom
-    LaunchedEffect(terminalLines.size) {
-        if (terminalLines.isNotEmpty()) {
-            listState.animateScrollToItem(terminalLines.size - 1)
+    LaunchedEffect(terminalLogs.size) {
+        if (terminalLogs.isNotEmpty()) {
+            listState.animateScrollToItem(terminalLogs.size - 1)
         }
     }
 
     fun executeCommand(input: String) {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return
-
-        // Echo the command
-        terminalLines.add(TerminalLine("$ $trimmed", Color(0xFF58A6FF), isBold = true))
-
-        viewModel.executeTerminalCommand(trimmed) { result ->
-            when (result) {
-                is TerminalResult.Success -> {
-                    terminalLines.add(TerminalLine("✓ ${result.message}", Color(0xFF39D353)))
-                }
-                is TerminalResult.Failure -> {
-                    terminalLines.add(TerminalLine("✗ ${result.reason}", Color(0xFFFF7B72)))
-                    if (result.hint != null) {
-                        terminalLines.add(TerminalLine("  Hint: ${result.hint}", Color(0xFF8A8A8A)))
-                    }
-                }
-                is TerminalResult.NeedsInput -> {
-                    terminalLines.add(TerminalLine("? ${result.question}", Color(0xFFFFBD2E)))
-                }
-                is TerminalResult.Pending -> {
-                    // Mostly for action commands handled by the router/nav, but for now just output:
-                    if (trimmed.startsWith("kaka ")) {
-                        terminalLines.add(TerminalLine("→ Action requested. Wait, action commands need a NavHost mapping here.", Color(0xFFFFBD2E)))
-                        if (trimmed.contains("show alias")) showManual = true
-                    }
-                }
+        
+        viewModel.executeTerminalCommand(trimmed) { action ->
+            when (action) {
+                "alias" -> showManual = true
+                "graph" -> onOpenGraph()
+                "ledger" -> onOpenLedger()
+                "export" -> onOpenExport()
+                "settings" -> onOpenSettings()
+                "accounts" -> onOpenAccounts()
+                "report" -> onOpenStatements()
             }
         }
+        terminalInput = ""
     }
 
     Scaffold(
@@ -193,13 +185,13 @@ fun AliasGuideScreen(
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                             state = listState
                         ) {
-                            items(terminalLines) { line ->
+                            items(terminalLogs) { log ->
                                 Text(
-                                    text = line.text,
-                                    color = line.color,
+                                    text = log.text,
+                                    color = log.toColor(),
                                     fontSize = 13.sp,
                                     fontFamily = FontFamily.Monospace,
-                                    fontWeight = if (line.isBold) FontWeight.Bold else FontWeight.Normal,
+                                    fontWeight = if (log.isBold) FontWeight.Bold else FontWeight.Normal,
                                     modifier = Modifier.padding(vertical = 1.dp)
                                 )
                             }
@@ -339,6 +331,16 @@ fun AliasGuideScreen(
 
                         Spacer(Modifier.height(16.dp))
 
+                        SectionHeader("Double-Entry & Accruals")
+                        CommandRow("xfer/ 1000 cash bkash", "Transfer ৳1000 from Cash to bKash")
+                        CommandRow("accrue/ 500 ar sales", "Accrue ৳500 Accounts Receivable to Sales")
+                        CommandRow("realize/ 500 cash ar", "Realize ৳500 Cash from Accounts Receivable")
+                        CommandRow("due/ in 500 rahim payable", "Log a ৳500 debt you owe Rahim")
+                        CommandRow("settle/ rahim 500", "Settle ৳500 of debt with Rahim")
+                        CommandRow("bal/ cash", "Check the balance of Cash account")
+
+                        Spacer(Modifier.height(16.dp))
+
                         SectionHeader("Account Management")
                         CommandRow("init/ bkash 5000", "Set bKash balance to ৳5000")
                         CommandRow("alter/ bkash bKash Mobile", "Rename bkash to 'bKash Mobile'")
@@ -350,6 +352,8 @@ fun AliasGuideScreen(
                         CommandRow("kaka show graph", "Open analytics / balance trajectory")
                         CommandRow("kaka ledger", "Open the Debt & Liability ledger")
                         CommandRow("kaka show alias", "Open this terminal manual")
+                        CommandRow("report/ bs", "View Balance Sheet")
+                        CommandRow("report/ pnl", "View Income Statement")
                         CommandRow("kaka export", "Open export screen")
                         CommandRow("/help", "Show this command reference")
 

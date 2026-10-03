@@ -276,6 +276,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 is com.projectkaka.inventory.search.TerminalResult.Failure -> result.reason
                 is com.projectkaka.inventory.search.TerminalResult.NeedsInput -> result.question
                 is com.projectkaka.inventory.search.TerminalResult.Pending -> "Command pending"
+                is com.projectkaka.inventory.search.TerminalResult.PendingAction -> "Action pending: ${result.action}"
             }
             onResult(msg)
         }

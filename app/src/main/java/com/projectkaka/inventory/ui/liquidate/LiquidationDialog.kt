@@ -38,7 +38,7 @@ import com.projectkaka.inventory.data.local.entity.ItemStatus
 fun LiquidationDialog(
     item: ItemEntity,
     onDismiss: () -> Unit,
-    onConfirm: (ItemStatus, Double) -> Unit
+    onConfirm: (ItemStatus, String) -> Unit
 ) {
     var mode by remember { mutableStateOf<ItemStatus?>(null) }
     var cashInput by remember { mutableStateOf("") }
@@ -120,7 +120,7 @@ fun LiquidationDialog(
                 onClick = {
                     val status = mode ?: return@Button
                     val recovered = if (status == ItemStatus.SOLD)
-                        cashInput.toDoubleOrNull() ?: 0.0 else 0.0
+                        cashInput else ""
                     onConfirm(status, recovered)
                 },
                 colors = ButtonDefaults.buttonColors(

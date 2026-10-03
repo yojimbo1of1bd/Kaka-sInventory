@@ -23,7 +23,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -379,7 +381,7 @@ private fun AddLedgerEntryDialog(
     permContacts: Boolean,
     permMicrophone: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (String, String, Double, LedgerType, String, Int, Long?) -> Unit
+    onConfirm: (String, String, String, LedgerType, String, Int, Long?) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
@@ -513,7 +515,7 @@ private fun AddLedgerEntryDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Liability", fontWeight = FontWeight.Bold) },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                     SegmentedButton(
                         selected = isReceivable,
@@ -638,9 +640,8 @@ private fun AddLedgerEntryDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val amount = amountStr.toDoubleOrNull() ?: 0.0
-                    if (name.isNotBlank() && amount > 0 && selectedAccountId != null) {
-                        onConfirm(name, phone, amount, if (isReceivable) LedgerType.RECEIVABLE else LedgerType.PAYABLE, note, selectedAccountId!!, dueDate)
+                    if (name.isNotBlank() && amountStr.isNotBlank() && selectedAccountId != null) {
+                        onConfirm(name, phone, amountStr, if (isReceivable) LedgerType.RECEIVABLE else LedgerType.PAYABLE, note, selectedAccountId!!, dueDate)
                     }
                 }
             ) { Text("Add") }

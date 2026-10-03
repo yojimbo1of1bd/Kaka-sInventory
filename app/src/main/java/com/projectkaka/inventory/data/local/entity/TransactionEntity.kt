@@ -1,10 +1,6 @@
 package com.projectkaka.inventory.data.local.entity
 
 import androidx.room.ColumnInfo
-import androidx.room.Entity
-import androidx.room.ForeignKey
-import androidx.room.Index
-import androidx.room.PrimaryKey
 
 import com.projectkaka.inventory.model.Money
 
@@ -24,33 +20,7 @@ enum class TransactionType {
     EXPENSE, INCOME, TRANSFER, DEBT_ISSUE, DEBT_SETTLE, ADJUSTMENT
 }
 
-@Entity(
-    tableName = "financial_transactions",
-    foreignKeys = [
-        ForeignKey(
-            entity = AccountEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["account_id"],
-            onDelete = ForeignKey.CASCADE
-        ),
-        ForeignKey(
-            entity = FinancialCategoryEntity::class,
-            parentColumns = ["id"],
-            childColumns = ["category_id"],
-            onDelete = ForeignKey.CASCADE
-        )
-    ],
-    indices = [
-        Index(value = ["account_id"]),
-        Index(value = ["category_id"]),
-        Index(value = ["timestamp"]),
-        Index(value = ["is_credit"]),
-        Index(value = ["type"]),
-        Index(value = ["transfer_id"])
-    ]
-)
 data class TransactionEntity(
-    @PrimaryKey(autoGenerate = true)
     val id: Int = 0,
 
     @ColumnInfo(name = "amount")

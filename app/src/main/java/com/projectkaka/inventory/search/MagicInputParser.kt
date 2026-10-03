@@ -79,12 +79,12 @@ object MagicInputParser {
             if (valueMatch != null) {
                 val operator = valueMatch.groupValues[1]
                 val rawNumber = valueMatch.groupValues[2]
-                val number = rawNumber.toDoubleOrNull()
-                    ?: return ParseResult.Error("Invalid value: $rawNumber")
-                if (number.isNaN() || number.isInfinite()) {
+                val minorUnits = try {
+                    com.projectkaka.inventory.model.Money.fromDecimalString(rawNumber).minorUnits
+                } catch (e: Exception) {
                     return ParseResult.Error("Invalid value: $rawNumber")
                 }
-                clauses += Clause("estimated_value ${operatorToSql(operator)} ?", number)
+                clauses += Clause("estimated_value ${operatorToSql(operator)} ?", minorUnits)
                 labels += token
                 continue
             }

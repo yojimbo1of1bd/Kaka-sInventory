@@ -23,6 +23,8 @@ class KakaApplication : Application() {
         InventoryRepositoryImpl(
             itemDao = database.itemDao(),
             careTaskDao = database.careTaskDao(),
+            financeRepository = financeRepository,
+            basketDao = database.basketDao(),
             ioDispatcher = Dispatchers.IO
         )
     }
@@ -31,6 +33,7 @@ class KakaApplication : Application() {
         FinanceRepositoryImpl(
             db = database,
             financeDao = database.financeDao(),
+            journalDao = database.journalDao(),
             ioDispatcher = Dispatchers.IO
         )
     }

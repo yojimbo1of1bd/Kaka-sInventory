@@ -41,5 +41,8 @@ data class ItemEntity(
     val status: ItemStatus = ItemStatus.ACTIVE,
 
     @ColumnInfo(name = "date_added")
-    val dateAdded: Long = System.currentTimeMillis()
+    val dateAdded: Long = System.currentTimeMillis(),
+
+    @ColumnInfo(name = "linked_journal_id")
+    val linkedJournalId: Int? = null
 )

@@ -76,8 +76,21 @@ class ItemDetailViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch { repository.deleteCareTask(task) }
     }
 
-    fun liquidate(item: ItemEntity, status: ItemStatus, recovered: Double) {
-        viewModelScope.launch { repository.liquidateItem(item.id, status, com.projectkaka.inventory.model.Money.fromDouble(recovered)) }
+    fun liquidate(item: ItemEntity, status: ItemStatus, recoveredStr: String) {
+        val recovered = try { com.projectkaka.inventory.model.Money.fromDecimalString(recoveredStr) } catch (e: Exception) { com.projectkaka.inventory.model.Money.ZERO }
+        viewModelScope.launch { repository.liquidateItem(item.id, status, recovered) }
+    }
+
+    fun moveItem(newLocationTag: String, newCategory: String) {
+        val item = uiState.value.item ?: return
+        viewModelScope.launch {
+            repository.updateItem(
+                item.copy(
+                    locationTag = newLocationTag.trim(),
+                    category = newCategory.trim().ifBlank { item.category }
+                )
+            )
+        }
     }
 
     fun deleteItem() {

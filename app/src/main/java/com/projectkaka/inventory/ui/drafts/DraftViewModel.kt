@@ -27,15 +27,16 @@ class DraftViewModel(application: Application) : AndroidViewModel(application) {
         name: String,
         category: String,
         locationTag: String,
-        estimatedValue: Double
+        estimatedValueStr: String
     ) {
         viewModelScope.launch {
+            val parsedValue = try { com.projectkaka.inventory.model.Money.fromDecimalString(estimatedValueStr) } catch (e: Exception) { com.projectkaka.inventory.model.Money.ZERO }
             repository.updateItem(
                 draft.copy(
                     name = name.ifBlank { "Item ${draft.id}" },
                     category = category.ifBlank { "Uncategorized" },
                     locationTag = locationTag.trim(),
-                    estimatedValue = com.projectkaka.inventory.model.Money.fromDouble(estimatedValue.coerceAtLeast(0.0)),
+                    estimatedValue = parsedValue,
                     isDraft = false
                 )
             )

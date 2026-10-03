@@ -13,8 +13,8 @@ android {
         applicationId = "com.projectkaka.inventory"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0-phase6"
+        versionCode = 7
+        versionName = "0.7.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
@@ -40,8 +40,19 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    }
+    sourceSets {
+        getByName("androidTest") {
+            assets.srcDirs(files("$projectDir/schemas"))
+        }
+        getByName("test") {
+            assets.srcDirs(files("$projectDir/schemas"))
+        }
     }
 }
 
@@ -87,6 +98,7 @@ dependencies {
     implementation(libs.coil.compose)
 
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.zxing.core)
 
     // Analytics (Phase 8)
     implementation(libs.vico.compose)
@@ -98,6 +110,11 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.androidx.room.testing)
+
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.room.testing)
 }
 
 tasks.register("testClasses") {

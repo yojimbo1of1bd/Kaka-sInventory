@@ -4,7 +4,9 @@ package com.projectkaka.inventory.data.repository
 import com.projectkaka.inventory.data.local.dao.CategorySpending
 import com.projectkaka.inventory.data.local.entity.AccountEntity
 import com.projectkaka.inventory.data.local.entity.FinancialCategoryEntity
+import com.projectkaka.inventory.data.local.entity.JournalEntryEntity
 import com.projectkaka.inventory.data.local.entity.LedgerEntryEntity
+import com.projectkaka.inventory.data.local.entity.PostingEntity
 import com.projectkaka.inventory.data.local.entity.TransactionEntity
 import com.projectkaka.inventory.model.Money
 import kotlinx.coroutines.flow.Flow
@@ -43,6 +45,7 @@ interface FinanceRepository {
     fun getActiveAccounts(): Flow<List<AccountEntity>>
     suspend fun getActiveAccountsSnapshot(): List<AccountEntity>
     suspend fun getAllAccountsSnapshot(): List<AccountEntity>
+    suspend fun runInvariantCheck()
     fun observeAllAccountBalances(): Flow<List<AccountEntity>>
     fun observeTotalCashBalance(): Flow<Money>
     suspend fun getAccountBalance(accountId: Int): Money?
@@ -61,6 +64,7 @@ interface FinanceRepository {
     // ── Transactions ────────────────────────────────────────────────────
 
     suspend fun recordTransaction(transaction: TransactionEntity): Long
+    suspend fun recordSplitTransaction(entry: JournalEntryEntity, postings: List<PostingEntity>): Long
     suspend fun deleteTransaction(transaction: TransactionEntity)
     suspend fun transfer(fromAccountId: Int, toAccountId: Int, amount: Money, note: String, timestamp: Long = System.currentTimeMillis())
     suspend fun deleteTransfer(transferId: String)
@@ -89,7 +93,18 @@ interface FinanceRepository {
      */
     suspend fun resolveCategory(token: String): FinancialCategoryEntity?
     
+    // Returns exact matches (or by alias) without guessing
+    suspend fun resolveAccountsExact(token: String): List<AccountEntity>
+    suspend fun resolveCategoriesExact(token: String): List<FinancialCategoryEntity>
+
     suspend fun initializeAccountBalance(accountAlias: String, targetBalance: Money)
+
+    /**
+     * Reconciliation routine that verifies all stored balances match the invariant
+     * (opening_balance + SUM(credits) - SUM(debits)) and repairs any that drift out of sync.
+     * Returns the number of accounts repaired.
+     */
+    suspend fun reconcileBalances(): Int
 
     // ── Ledger ──────────────────────────────────────────────────────────
 

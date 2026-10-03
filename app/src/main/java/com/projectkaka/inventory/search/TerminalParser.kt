@@ -29,11 +29,15 @@ object TerminalParser {
             "credit/" -> parseFinancial(args, true)
             "debit/" -> parseFinancial(args, false)
             "init/" -> parseInit(args)
-            "xfer/" -> parseTransfer(args)
+            "xfer/", "accrue/", "realize/" -> parseTransfer(args)
             "due/" -> parseDue(args)
             "settle/" -> parseSettle(args)
             "account/" -> parseAccount(args)
             "delete/" -> parseDelete(args)
+            "bal/" -> parseBalanceCheck(args)
+            "report/" -> parseReport(args)
+            "alter/" -> parseAlter(args)
+            "reset/" -> TerminalCommand.Reset
             else -> TerminalCommand.Error("Unknown terminal command: $cmd")
         }
     }
@@ -41,7 +45,7 @@ object TerminalParser {
     private fun parseFinancial(args: List<String>, forceCredit: Boolean?): TerminalCommand {
         if (args.isEmpty()) return TerminalCommand.Error("Usage: f/ ±amount <account> <category> [note] [@date]")
 
-        var amount: Double? = null
+        var amount: com.projectkaka.inventory.model.Money? = null
         var isCredit = false
         var amountTokenIndex = -1
         var dateToken: String? = null
@@ -55,8 +59,8 @@ object TerminalParser {
             }
             if (amount == null) {
                 val rawNumber = token.removePrefix("+").removePrefix("-")
-                val parsed = rawNumber.toDoubleOrNull()
-                if (parsed != null && parsed > 0.0 && !parsed.isNaN() && !parsed.isInfinite()) {
+                val parsed = try { com.projectkaka.inventory.model.Money.fromDecimalString(rawNumber) } catch (e: Exception) { null }
+                if (parsed != null && parsed.minorUnits > 0L) {
                     amount = parsed
                     isCredit = forceCredit ?: token.startsWith("+")
                     amountTokenIndex = index
@@ -75,8 +79,8 @@ object TerminalParser {
         val t1 = args[0]
         val t2 = args[1]
         
-        val amt1 = t1.toDoubleOrNull()
-        val amt2 = t2.toDoubleOrNull()
+        val amt1 = try { com.projectkaka.inventory.model.Money.fromDecimalString(t1) } catch (e: Exception) { null }
+        val amt2 = try { com.projectkaka.inventory.model.Money.fromDecimalString(t2) } catch (e: Exception) { null }
         
         return if (amt1 != null && amt2 == null) {
             TerminalCommand.Init(t2, amt1)
@@ -89,7 +93,7 @@ object TerminalParser {
 
     private fun parseTransfer(args: List<String>): TerminalCommand {
         if (args.size < 3) return TerminalCommand.Error("Usage: xfer/ <amount> <from> <to> [note]")
-        val amount = args[0].toDoubleOrNull() ?: return TerminalCommand.Error("Invalid amount for transfer: ${args[0]}")
+        val amount = try { com.projectkaka.inventory.model.Money.fromDecimalString(args[0]) } catch (e: Exception) { return TerminalCommand.Error("Invalid amount for transfer: ${args[0]}") }
         return TerminalCommand.Transfer(amount, args[1], args[2], args.drop(3))
     }
 
@@ -101,7 +105,7 @@ object TerminalParser {
             "out" -> true
             else -> return TerminalCommand.Error("First argument of due/ must be 'in' or 'out'")
         }
-        val amount = args[1].toDoubleOrNull() ?: return TerminalCommand.Error("Invalid amount for due: ${args[1]}")
+        val amount = try { com.projectkaka.inventory.model.Money.fromDecimalString(args[1]) } catch (e: Exception) { return TerminalCommand.Error("Invalid amount for due: ${args[1]}") }
         
         var dateToken: String? = null
         var contactParts = mutableListOf<String>()
@@ -120,7 +124,7 @@ object TerminalParser {
 
     private fun parseSettle(args: List<String>): TerminalCommand {
         if (args.isEmpty()) return TerminalCommand.Error("Usage: settle/ <contact> [amount]")
-        val amountToken = args.lastOrNull()?.toDoubleOrNull()
+        val amountToken = args.lastOrNull()?.let { try { com.projectkaka.inventory.model.Money.fromDecimalString(it) } catch (e: Exception) { null } }
         return if (amountToken != null) {
             TerminalCommand.LedgerSettle(args.dropLast(1).joinToString(" "), amountToken)
         } else {
@@ -134,7 +138,7 @@ object TerminalParser {
         return when (action) {
             "add" -> {
                 if (args.size < 3) return TerminalCommand.Error("Usage: account/ add <name> <type> [balance]")
-                val balance = if (args.size > 3) args.last().toDoubleOrNull() else null
+                val balance = if (args.size > 3) try { com.projectkaka.inventory.model.Money.fromDecimalString(args.last()) } catch (e: Exception) { null } else null
                 val typeToken = if (balance != null) args[args.size - 2] else args.last()
                 val nameEnd = if (balance != null) args.size - 2 else args.size - 1
                 val name = args.subList(1, nameEnd).joinToString(" ")
@@ -151,6 +155,31 @@ object TerminalParser {
     private fun parseDelete(args: List<String>): TerminalCommand {
         if (args.size < 2) return TerminalCommand.Error("Usage: delete/ <tx|account|entry> <selector>")
         return TerminalCommand.Delete(args[0].lowercase(), args.subList(1, args.size).joinToString(" "))
+    }
+
+    private fun parseBalanceCheck(args: List<String>): TerminalCommand {
+        if (args.isEmpty()) return TerminalCommand.Error("Usage: bal/ <account|all>")
+        return TerminalCommand.BalanceCheck(args.joinToString(" ").lowercase())
+    }
+
+    private fun parseReport(args: List<String>): TerminalCommand {
+        if (args.isEmpty()) return TerminalCommand.Error("Usage: report/ <bs|pnl|trend> [arg]")
+        val type = args[0].lowercase()
+        if (type !in listOf("bs", "pnl", "trend")) {
+            return TerminalCommand.Error("Unknown report type: $type. Use bs, pnl, or trend.")
+        }
+        val arg = if (args.size > 1) args[1] else null
+        return TerminalCommand.Report(type, arg)
+    }
+
+    private fun parseAlter(args: List<String>): TerminalCommand {
+        if (args.size < 3 || args[1].lowercase() != "rename") {
+            return TerminalCommand.Error("Usage: alter/ <account> rename <newName>")
+        }
+        val accountToken = args[0]
+        val action = args[1].lowercase()
+        val newName = args.drop(2).joinToString(" ")
+        return TerminalCommand.AccountAlter(accountToken, action, newName)
     }
 
     /** Shell-like tokenizer: whitespace separates tokens outside quotes. */

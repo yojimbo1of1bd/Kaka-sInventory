@@ -27,7 +27,7 @@ enum class BucketSize(val label: String) {
 
 data class GraphUiState(
     val entryModel: ChartEntryModel? = null,
-    val labels: Map<Float, String> = emptyMap(),
+    val labels: Map<Int, String> = emptyMap(),
     val isLoading: Boolean = true,
     val bucketSize: BucketSize = BucketSize.WEEK,
     val accounts: List<AccountEntity> = emptyList(),
@@ -144,7 +144,7 @@ class GraphViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val xLabels = buckets.mapIndexed { index, date ->
-            index.toFloat() to date.format(formatter)
+            index to date.format(formatter)
         }.toMap()
 
         val seriesMap = mutableMapOf<String, MutableList<FloatEntry>>()

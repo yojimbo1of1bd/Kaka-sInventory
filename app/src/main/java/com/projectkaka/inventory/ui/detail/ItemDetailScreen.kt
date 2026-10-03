@@ -55,6 +55,17 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.DriveFileMove
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
+import com.projectkaka.inventory.util.GalleryHelper
+
 @Composable
 fun ItemDetailScreen(
     itemId: Int,
@@ -64,10 +75,12 @@ fun ItemDetailScreen(
 ) {
     LaunchedEffect(itemId) { viewModel.load(itemId) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     var showMaintenanceDialog by remember { mutableStateOf(false) }
     var showLiquidationDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showMoveDialog by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         val item = state.item
@@ -88,12 +101,32 @@ fun ItemDetailScreen(
                 onCompleteTask = { viewModel.completeTask(it) },
                 onDeleteTask = { viewModel.deleteTask(it) },
                 onLiquidate = { showLiquidationDialog = true },
+                onMove = { showMoveDialog = true },
+                onDownload = {
+                    val result = GalleryHelper.saveImageToGallery(context, item.imagePath, item.name)
+                    if (result.isSuccess) {
+                        Toast.makeText(context, "Saved WebP image to Gallery in Pictures/ProjectKaka", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Failed to save: ${result.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                    }
+                },
                 onDelete = { showDeleteDialog = true }
             )
         }
     }
 
     state.item?.let { item ->
+        if (showMoveDialog) {
+            MoveItemDialog(
+                item = item,
+                onDismiss = { showMoveDialog = false },
+                onConfirm = { loc, cat ->
+                    viewModel.moveItem(loc, cat)
+                    showMoveDialog = false
+                    Toast.makeText(context, "Item moved to $loc", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
         if (showMaintenanceDialog) {
             MaintenanceDialog(
                 item = item,
@@ -147,6 +180,8 @@ private fun DetailContent(
     onCompleteTask: (CareTaskEntity) -> Unit,
     onDeleteTask: (CareTaskEntity) -> Unit,
     onLiquidate: () -> Unit,
+    onMove: () -> Unit,
+    onDownload: () -> Unit,
     onDelete: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -175,12 +210,28 @@ private fun DetailContent(
                     fontWeight = FontWeight.Black
                 )
             }
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Delete Item",
-                    tint = MaterialTheme.colorScheme.error
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onDownload) {
+                    Icon(
+                        Icons.Default.FileDownload,
+                        contentDescription = "Save Image to Gallery",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                IconButton(onClick = onMove) {
+                    Icon(
+                        Icons.Default.DriveFileMove,
+                        contentDescription = "Move Item",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Delete Item",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
 
@@ -220,6 +271,25 @@ private fun DetailContent(
             )
 
             Spacer(Modifier.height(16.dp))
+
+            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onMove,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.DriveFileMove, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Move Item")
+                }
+                OutlinedButton(
+                    onClick = onDownload,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.FileDownload, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Save Image")
+                }
+            }
 
             if (item.status == ItemStatus.ACTIVE) {
                 OutlinedButton(
@@ -330,3 +400,68 @@ private fun TaskRow(
 
 private fun formatDate(millis: Long): String =
     SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(millis))
+
+@Composable
+private fun MoveItemDialog(
+    item: ItemEntity,
+    onDismiss: () -> Unit,
+    onConfirm: (newLocation: String, newCategory: String) -> Unit
+) {
+    var location by remember { mutableStateOf(item.locationTag) }
+    var category by remember { mutableStateOf(item.category) }
+    val commonLocations = listOf("Living Room", "Master Bedroom", "Kitchen", "Home Office", "Storage", "Balcony")
+    val commonCategories = listOf("Electronics", "Prescriptions & Slips", "Clothing", "Academic", "Tools", "Furniture")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Move Item", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text("Update Location / Room", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = location,
+                    onValueChange = { location = it },
+                    label = { Text("Location Tag") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(commonLocations) { loc ->
+                        FilterChip(
+                            selected = location.equals(loc, ignoreCase = true),
+                            onClick = { location = loc },
+                            label = { Text(loc, fontSize = 11.sp) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Text("Update Category", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = category,
+                    onValueChange = { category = it },
+                    label = { Text("Category") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp)
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(commonCategories) { cat ->
+                        FilterChip(
+                            selected = category.equals(cat, ignoreCase = true),
+                            onClick = { category = cat },
+                            label = { Text(cat, fontSize = 11.sp) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(location, category) }
+            ) { Text("Save & Move") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+

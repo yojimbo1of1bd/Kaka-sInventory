@@ -142,9 +142,10 @@ fun AccountsManagerScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val amount = editAmount.toDoubleOrNull()
-                    if (amount != null) {
-                        viewModel.updateOpeningBalance(editAccountId!!, amount)
+                    if (editAmount.isNotBlank()) {
+                        viewModel.updateOpeningBalance(editAccountId!!, editAmount) { success, msg ->
+                            showMessageDialog = msg
+                        }
                     }
                     editAccountId = null
                 }) {
@@ -203,6 +204,8 @@ fun AccountsManagerScreen(
                                                 AccountType.ASSET -> "Physical assets/investments. Excluded from budget."
                                                 AccountType.LIABILITY -> "Debts like credit cards. Excluded from budget."
                                                 AccountType.CAPITAL -> "Owner equity/savings. Excluded from budget."
+                                                AccountType.REVENUE -> "Income/Revenue. Excluded from budget."
+                                                AccountType.EXPENSE -> "Expenses/Costs. Excluded from budget."
                                             }
                                             Text(desc, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                                         }
@@ -219,9 +222,10 @@ fun AccountsManagerScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val bal = newAccountBalance.toDoubleOrNull() ?: 0.0
                     if (newAccountName.isNotBlank()) {
-                        viewModel.createAccount(newAccountName, newAccountType, bal)
+                        viewModel.createAccount(newAccountName, newAccountType, newAccountBalance.ifBlank { "0.0" }) { success, msg ->
+                            showMessageDialog = msg
+                        }
                     }
                     showAddDialog = false
                     newAccountName = ""

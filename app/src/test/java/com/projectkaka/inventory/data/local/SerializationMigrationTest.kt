@@ -127,8 +127,10 @@ class SerializationMigrationTest {
         val account = db.financeDao().getActiveAccountsSnapshot().first()
         assertEquals(10025L, account.openingBalance.minorUnits)
 
-        val transaction = db.financeDao().getAllTransactionsExport().first()
-        assertEquals(5075L, transaction.amount.minorUnits)
+        val transactionCursor = db.query(androidx.sqlite.db.SimpleSQLiteQuery("SELECT amount FROM postings LIMIT 1"), null)
+        transactionCursor.moveToFirst()
+        assertEquals(5075L, transactionCursor.getLong(0))
+        transactionCursor.close()
 
         val ledger = db.financeDao().getAllLedgerEntriesExport().first()
         assertEquals(2510L, ledger.amount.minorUnits)
@@ -240,15 +242,64 @@ class SerializationMigrationTest {
         val account = db.financeDao().getActiveAccountsSnapshot().first()
         assertEquals(10025L, account.openingBalance.minorUnits)
 
-        val transaction = db.financeDao().getAllTransactionsExport().first()
-        assertEquals(5075L, transaction.amount.minorUnits)
-        assertEquals("TRANSFER", transaction.type.name)
-        assertEquals("abc", transaction.transferId)
-        assertEquals(2, transaction.counterAccountId)
+        val transactionCursor = db.query(androidx.sqlite.db.SimpleSQLiteQuery("SELECT amount FROM postings LIMIT 1"), null)
+        transactionCursor.moveToFirst()
+        assertEquals(5075L, transactionCursor.getLong(0))
+        transactionCursor.close()
 
         val ledger = db.financeDao().getAllLedgerEntriesExport().first()
         assertEquals(2510L, ledger.amount.minorUnits)
         assertEquals(1, ledger.accountId)
         assertEquals(1, ledger.linkedTransactionId)
+    }
+
+    @Test
+    fun testImageRoundTrip() = runBlocking {
+        val v3Json = """
+        {
+            "version": 3,
+            "exportedAt": 1690000000000,
+            "itemCount": 1,
+            "items": [
+                {
+                    "id": 1,
+                    "name": "Item with Image",
+                    "category": "Test",
+                    "locationTag": "Home",
+                    "estimatedValue": 1000,
+                    "status": "ACTIVE",
+                    "isDraft": false,
+                    "dateAdded": 1690000000000,
+                    "imageName": "test_image.webp"
+                }
+            ]
+        }
+        """.trimIndent()
+
+        val tempZip = File(context.cacheDir, "backup_with_image.kaka")
+        ZipOutputStream(FileOutputStream(tempZip)).use { zos ->
+            zos.putNextEntry(ZipEntry("data.json"))
+            zos.write(v3Json.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+            
+            zos.putNextEntry(ZipEntry("images/test_image.webp"))
+            zos.write("fake image content".toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+        }
+
+        val uri = Uri.fromFile(tempZip)
+        val result = ImportReader.restoreKakaZip(context, uri, db)
+
+        assertEquals(1, result.itemsRestored)
+
+        val item = db.itemDao().getAllItemsSnapshot().first()
+        val imageDir = LocalImageStore.imageDir(context)
+        val expectedPath = File(imageDir, "test_image.webp").absolutePath
+
+        assertEquals(expectedPath, item.imagePath)
+
+        val restoredFile = File(expectedPath)
+        org.junit.Assert.assertTrue("Restored image file should exist", restoredFile.exists())
+        assertEquals("fake image content", restoredFile.readText())
     }
 }

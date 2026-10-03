@@ -1,83 +1,186 @@
-# Project Kaka — MVP
+# 📦 Project Kaka — Sovereign Inventory & Personal Finance System
 
-A strictly offline Android inventory & decluttering tool.
-No cloud. No Firebase, no Supabase, no network permission at all.
+> **Strictly Offline · Double-Entry Accounting · Moving Carton Baskets · Visual Infographics · Zero Cloud**
 
-Stack: Kotlin · Jetpack Compose (Material 3) · Room (SQLite) · CameraX · Coroutines · MVVM + Repository.
-
----
-
-## Phase 1 — Foundation & Data Layer
-Room schema (`ItemEntity`, `CareTaskEntity`), DAOs, WAL `AppDatabase`, `InventoryRepository`,
-and the Clash-of-Clans style splash screen.
-
-## Phase 2 — Ingestion & Storage
-Custom CameraX burst viewfinder in Compose, the WebP pipeline (EXIF rotate -> 1600px cap ->
-`WEBP_LOSSY` @75% -> `filesDir/kaka_webp_store/`), and the draft-activation flow.
-
-## Phase 3 — The Engine & UI
-Magic Input Bar (`i/ c/ l/ v/>`), `@RawQuery` search, swipe-to-liquidate, live dashboard stats.
-
-## Phase 4 — Maintenance & Liquidation
-Triage clock, overdue math, joined due-task query, the Red Ring on the profile icon, the
-due-task bottom sheet, and the Maintenance dialog (long-press an item).
-
-## Phase 5 — Detail, Export & Extended Grammar
-Extended grammar (`m/due`, `m/none`, `s/sold|active|donated|trashed`), the Item Detail screen
-with full care-task management, and CSV/JSON export to local app storage.
-
-## Phase 6 — Appearance & Settings
-- Switchable light / dark theme (`ui/theme/Theme.kt`).
-- Settings screen (`ui/settings/SettingsScreen.kt`) with dashboard visibility toggles.
-- Real preference store (`data/settings/UserPreferences.kt`) backed by SharedPreferences.
-
-## Phase 7 — Granular Permission Kill-Switch
-- Full opt-in/opt-out toggles for all capabilities (Camera, Biometrics, Contacts).
-- Graceful degradation when permissions are denied or toggled off in settings.
-
-## Phase 8 — Security & Lock Lifecycle
-- PBKDF2 hashed PIN storage (no plaintext PINs).
-- Rate-limiting, throttling, and lockout mechanisms for PIN retries.
-- App lock state that survives process backgrounding and navigation.
-
-## Phase 9 & 10 — Lifecycle Correctness & Consistency
-- Lifecycle correctness in MainActivity.
-- Full round-trip testing for Schema migrations (V1 -> V2 -> V3 -> V4 -> V5).
-- Strict minor-unit money arithmetic and unified image storage paths.
-- Backup configuration limits to `.db` and `kaka_webp_store`.
-
-
+**Project Kaka** is a privacy-first personal asset tracking, moving management, and double-entry budgeting application built for Android. It operates under a strict **zero-network policy**—the application manifest contains **no `INTERNET` permission**, ensuring your personal belongings, financial statements, and receipts never leave your physical device.
 
 ---
 
-## Requirements
-- Android Studio Ladybug (2024.2) or newer · JDK 17 · Android SDK 35
-- A device/emulator on Android 8.0 (API 26)+ with a camera (for Phase 2)
+## 🌟 Key Architecture & Capabilities
 
-## How to run
-1. Unzip somewhere with no spaces in the path.
-2. Android Studio -> **File > Open** -> select the `ProjectKaka` folder (containing `settings.gradle.kts`).
-   Do NOT open `app/`.
-3. If Studio reports a missing Gradle wrapper JAR, let it use a local Gradle distribution, or run
-   once: `gradle wrapper --gradle-version 8.9`.
-4. Let **Gradle Sync** finish.
-5. Press **Run ▶**.
-6. Optional — pure-JVM tests: `gradlew test`
+### 1. 💰 Collapsible Daily Budget & Real-Time Financial Engine
+- **Single-Bar Collapsible Dashboard**:
+  - **Collapsed State**: A sleek, minimal card displaying `৳{dailyBudget}/d • Today: ৳{todaySpend}` on the left and `Total: ৳{totalCashBalance}` on the right with an intuitive chevron.
+  - **Expanded State**: Smoothly unfolds via `.animateContentSize()` to reveal full budget metrics (remaining days, visible cash balance, today's spend) and a horizontally scrollable row of active account chips (`LazyRow`) that accommodates any number of accounts.
+- **Strict Minor-Unit Money Arithmetic**:
+  - Implements a dedicated `Money` value class backed by integer minor units (`Long`).
+  - Eliminates floating-point rounding errors and financial discrepancies across all accounts, ledger postings, and inventory valuations.
+- **Overspending Spike Detection & Safety Guardrails**:
+  - Automated detection when daily expenditures exceed the calculated threshold.
+  - Configurable emergency alert dispatch via system intents (WhatsApp, SMS, or Phone Call) if overspending strikes persist.
 
-## Things to try
-- **Appearance**: gear icon -> toggle "Dark theme" and watch the app repaint instantly.
-- **Search**: `c/electronics v/>500`, `m/due` (overdue maintenance), `s/sold` (liquidated items).
-- **Detail**: tap a row to open it; add, complete, or delete care tasks there.
-- **Export**: download icon -> Export CSV / JSON.
+### 2. 🚚 Moving Cartons & Baskets System
+- **Carton & Box Organization**:
+  - Create color-coded cartons/boxes (`BasketEntity`) designed for home relocation, storage organization, or transportation.
+  - Track item counts, total carton valuation, and packed/unpacked status.
+- **Responsive Inventory Packing**:
+  - Search inventory live by name, category, or location tag.
+  - Supports packing both active inventory and drafts (`is_draft = 0` and `is_draft = 1`).
+  - Integrated soft-keyboard handling with `imePadding()` and real-time item counter.
+- **Offline Barcode & QR Code Label Generator**:
+  - Generates customizable QR codes and 1D Code-128 barcodes offline using ZXing.
+  - Exports printable high-resolution box labels directly to the Android MediaStore gallery (`Pictures/ProjectKaka`).
+- **CameraX Carton Scanner**:
+  - Real-time viewfinder that identifies carton QR codes and barcodes.
+  - **Runtime Camera Permission**: Seamless permission request flow with fallback UI and manual code entry.
+  - **Hardware Stride Compensation**: Extracts pure Y-plane luminance from CameraX frames, stripping hardware `rowStride` padding to guarantee reliable scanning across all camera sensors.
+  - Dual-pass binarization (HybridBinarizer + GlobalHistogramBinarizer) for low-light and high-glare label decoding.
 
-## Why this is genuinely offline and secure
-- `AndroidManifest.xml` declares **no** `INTERNET` permission. (Permissions exist only for Camera, Biometrics, and Contacts, and are individually gated).
-- Cloud backup is excluded in `data_extraction_rules.xml`; only device-to-device transfer carries `kaka_inventory.db` and `kaka_webp_store/`.
-- Coil only ever renders local `File` paths. Exports and preferences are app-private files.
-- App state = one `.db` file + one image folder + one export folder + one prefs XML, all sandboxed.
-- PINs are PBKDF2 hashed, and full app-locking is enforced upon backgrounding.
+### 3. 🗺️ Visual Belongings Map (Infographic PNG Export)
+- **On-Device Infographic Rendering**:
+  - Generates high-resolution graphical breakdown posters (1080px wide) of your belongings directly onto an Android `Bitmap`.
+  - Displays category headers, item count, total estimated valuation, individual item badges, and visual tags.
+- **Flexible Category Selection**:
+  - Export complete inventory ("All Belongings") or filter by any category.
+  - Interactive selection dialog (`VisualMapDialog.kt`) featuring category chips, custom category text search, and live matching item counts.
+  - Direct gallery export via `MediaStore` with zero cloud dependencies.
 
-## Pinned versions
-minSdk 26 · compileSdk/targetSdk 35 · Kotlin 2.0.21 · AGP 8.7.3 · KSP 2.0.21-1.0.28 ·
-Compose BOM 2024.12.01 · Room 2.6.1 · CameraX 1.4.1 · Coil 2.7.0 · androidx.exifinterface 1.3.7 ·
-JUnit 4.13.2.
+### 4. ⚡ Magic Input Bar & Power Search Grammar
+- Power-user query grammar processed by `MagicInputParser` and compiled into Room `@RawQuery`:
+  - `i/laptop` — Filter by item name prefix or substring.
+  - `c/electronics` — Filter by category.
+  - `l/office` — Filter by location tag.
+  - `v/>5000` / `v/<1000` — Numerical value comparisons.
+  - `m/due` — Items with overdue maintenance or care tasks.
+  - `m/none` — Items without active care tasks.
+  - `s/active|sold|donated|trashed` — Filter by lifecycle status.
+- Integrated quick toggle between Grid view and List view.
+
+### 5. 🛠️ Maintenance, Care Tasks & Liquidation
+- **Recurring Care Tasks**:
+  - Attach maintenance schedules (e.g., lens cleaning, battery cycling, lubrication) with custom recurrence intervals.
+  - Visual urgency indicators and dedicated triage sheet.
+- **Swipe-to-Liquidate**:
+  - Liquidate items as Sold, Donated, or Trashed.
+  - Automatically records cash recovery into the double-entry accounting ledger.
+
+### 6. 🔒 Privacy, Security & Data Sovereignty
+- **No Internet Access**: Zero network permissions declared in `AndroidManifest.xml`.
+- **Granular Permission Kill-Switches**: Individual toggle switches in Settings for Camera, Biometrics, Contacts, and Storage.
+- **PBKDF2 Hashed PIN**: Hardware-backed authentication and rate-limited PIN verification with biometric support.
+- **Complete Offline Backup & Restore**:
+  - Export structured CSV and JSON exports.
+  - Single-archive `.kaka` ZIP backup bundling the entire SQLite database and full-resolution WebP images.
+
+---
+
+## 🏗️ Technology Stack
+
+| Layer | Technology |
+|---|---|
+| **Language** | Kotlin 2.0.21 |
+| **UI Toolkit** | Jetpack Compose (Material 3, Compose BOM 2024.12.01) |
+| **Architecture** | MVVM + Repository Pattern + Clean Architecture |
+| **Local Database** | Room SQLite 2.6.1 with Write-Ahead Logging (WAL) |
+| **Camera & Vision** | CameraX 1.4.1 (Camera2, Lifecycle, View) |
+| **Barcode / QR** | ZXing Core 3.5.3 (Offline generation & analysis) |
+| **Image Loading** | Coil 2.7.0 (Local File pipeline) |
+| **Image Compression** | Native Android WebP Lossy (75% quality, 1600px cap) |
+| **Async & State** | Kotlin Coroutines & `StateFlow` / `SharedFlow` |
+| **Testing** | JUnit 4, AndroidX Test, Room MigrationTestHelper |
+
+---
+
+## 📁 Repository Structure
+
+```
+Kaka-sInventory/
+├── app/
+│   ├── build.gradle.kts                # App-level build configuration & dependencies
+│   ├── schemas/                        # Exported Room database migration schemas (v1..v11)
+│   └── src/
+│       ├── androidTest/                # Instrumented tests & Room migration verification
+│       ├── test/                       # Unit tests (Money, BarcodeResolution, VisualMap, etc.)
+│       └── main/
+│           ├── AndroidManifest.xml     # Offline manifest (No INTERNET permission)
+│           ├── java/com/projectkaka/inventory/
+│           │   ├── KakaApplication.kt   # Application entry point & dependency graph
+│           │   ├── MainActivity.kt      # Main lifecycle host & biometric gate
+│           │   ├── data/
+│           │   │   ├── local/          # Room AppDatabase, DAOs, Type Converters, Migrations
+│           │   │   ├── repository/     # InventoryRepository & FinanceRepository implementations
+│           │   │   └── settings/       # SharedPreferences & UserPreferences store
+│           │   ├── model/              # Domain models (Money, ItemStatus, AccountType)
+│           │   ├── search/             # MagicInputParser, TerminalExecutor, SearchHelper
+│           │   ├── ui/
+│           │   │   ├── basket/         # Carton management, Pack dialog, Box scanner & barcode preview
+│           │   │   ├── dashboard/      # Home dashboard, Collapsible budget bar, Visual map trigger
+│           │   │   ├── detail/         # Item detail & care task management
+│           │   │   ├── drafts/         # Rapid-capture intake & draft activation
+│           │   │   ├── export/         # CSV/JSON/ZIP backup and VisualMapDialog
+│           │   │   ├── liquidate/      # Ledger, statements, and liquidation dialogs
+│           │   │   ├── search/         # MagicInputBar with grammar hints
+│           │   │   └── settings/       # Account manager, privacy kill-switches, theme settings
+│           │   └── util/               # BarcodeAnalyzer, BarcodeGenerator, GalleryHelper, VisualMapGenerator
+│           └── res/                    # Drawables, mipmaps, strings, and XML extraction rules
+├── gradle/                             # Gradle wrapper & version catalog (libs.versions.toml)
+├── build.gradle.kts                    # Root build configuration
+├── settings.gradle.kts                 # Project settings & repositories
+└── .gitignore                          # Comprehensive Android / Gradle ignore rules
+```
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- **Android Studio**: Ladybug (2024.2) or newer.
+- **JDK**: Java Development Kit 17.
+- **Android SDK**: API Level 35 (compileSdk & targetSdk), Min SDK 26 (Android 8.0 Oreo+).
+- **Physical Device or Emulator**: Armed with a camera for rapid scanning and carton barcode detection.
+
+### Building & Running
+1. Clone or open the repository in Android Studio:
+   ```bash
+   git clone <repository-url>
+   ```
+2. Open Android Studio and choose **File > Open**, selecting the root directory containing `settings.gradle.kts`.
+3. Allow Gradle to synchronize dependencies.
+4. Connect an Android device with USB debugging enabled (or start an AVD emulator).
+5. Build and install the debug APK:
+   ```powershell
+   .\gradlew installDebug
+   ```
+6. Alternatively, run the app directly using the green **Run ▶** button in Android Studio.
+
+---
+
+## 🧪 Testing Suite
+
+### Unit Tests
+Execute the local JVM test suite (testing money math, search grammar, barcode decoding, and visual mapping):
+```powershell
+.\gradlew testDebugUnitTest
+```
+
+### Instrumented Migration Tests
+Execute the on-device migration validation suite to verify non-destructive database evolution:
+```powershell
+.\gradlew connectedAndroidTest
+```
+
+---
+
+## 📜 Database Migration Policy
+
+The local database schema evolves strictly through non-destructive migrations:
+1. Every change to database entities or columns requires an increment in `AppDatabase.kt` version.
+2. The schema JSON is exported to `app/schemas/com.projectkaka.inventory.data.local.AppDatabase/` via Room KSP.
+3. A migration object (e.g., `MIGRATION_10_11`) must be declared and tested using `MigrationTestHelper` in `app/src/androidTest/`.
+4. Financial columns must preserve integer minor units (`Long`) without loss of precision.
+
+---
+
+## 📄 License & Sovereignty
+
+Project Kaka is released as sovereign, open-source software. All data collected by the application remains strictly in the user's custody on the physical device.

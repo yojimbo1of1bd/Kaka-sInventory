@@ -99,6 +99,9 @@ class UserPreferences(context: Context) {
     )
     val hiddenAccountIds: StateFlow<Set<Int>> = _hiddenAccountIds.asStateFlow()
 
+    private val _businessMode = MutableStateFlow(prefs.getBoolean(KEY_BUSINESS_MODE, false))
+    val businessMode: StateFlow<Boolean> = _businessMode.asStateFlow()
+
     private val _permCamera = MutableStateFlow(prefs.getBoolean(KEY_PERM_CAMERA, true))
     val permCamera: StateFlow<Boolean> = _permCamera.asStateFlow()
 
@@ -246,6 +249,11 @@ class UserPreferences(context: Context) {
         _hiddenAccountIds.value = currentSet
     }
 
+    fun setBusinessMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_BUSINESS_MODE, enabled).apply()
+        _businessMode.value = enabled
+    }
+
     private fun loadThemeMode(): ThemeMode {
         val modeStr = prefs.getString(KEY_THEME_MODE, ThemeMode.SYSTEM.name)
         return try {
@@ -286,5 +294,6 @@ class UserPreferences(context: Context) {
         const val KEY_APP_PIN_ITERATIONS = "app_pin_iterations"
         const val KEY_LOCKOUT_ATTEMPTS = "lockout_attempts"
         const val KEY_LOCKOUT_UNTIL = "lockout_until"
+        const val KEY_BUSINESS_MODE = "business_mode"
     }
 }

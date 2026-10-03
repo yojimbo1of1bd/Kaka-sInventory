@@ -39,4 +39,9 @@ data class FinancialCategoryEntity(
     fun matchesInput(input: String): Boolean {
         return com.projectkaka.inventory.util.SearchHelper.matchesAlias(input, name, aliases)
     }
+
+    /** Strict match against the full name or an alias. */
+    fun matchesExactInput(input: String): Boolean {
+        return com.projectkaka.inventory.util.SearchHelper.matchesExact(input, name, aliases)
+    }
 }

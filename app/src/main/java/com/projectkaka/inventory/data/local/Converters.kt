@@ -3,10 +3,30 @@ package com.projectkaka.inventory.data.local
 import androidx.room.TypeConverter
 import com.projectkaka.inventory.data.local.entity.AccountType
 import com.projectkaka.inventory.data.local.entity.CategoryType
+import com.projectkaka.inventory.data.local.entity.JournalStatus
+import com.projectkaka.inventory.data.local.entity.ApprovalStatus
 import com.projectkaka.inventory.data.local.entity.ItemStatus
 import com.projectkaka.inventory.data.local.entity.LedgerType
 
 class Converters {
+
+    // ── JournalStatus ───────────────────────────────────────────────────
+
+    @TypeConverter
+    fun fromJournalStatus(status: JournalStatus): String = status.name
+
+    @TypeConverter
+    fun toJournalStatus(value: String): JournalStatus =
+        runCatching { JournalStatus.valueOf(value) }.getOrDefault(JournalStatus.POSTED)
+
+    // ── ApprovalStatus ──────────────────────────────────────────────────
+
+    @TypeConverter
+    fun fromApprovalStatus(status: ApprovalStatus): String = status.name
+
+    @TypeConverter
+    fun toApprovalStatus(value: String): ApprovalStatus =
+        runCatching { ApprovalStatus.valueOf(value) }.getOrDefault(ApprovalStatus.APPROVED)
 
     // ── ItemStatus (existing) ───────────────────────────────────────────
 

@@ -12,11 +12,25 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+enum class LogType {
+    INFO, ECHO, SUCCESS, ERROR, HINT, WARNING
+}
+
+data class TerminalLog(
+    val text: String,
+    val type: LogType,
+    val isBold: Boolean = false
+)
+
 data class AliasGuideUiState(
     val accounts: List<AccountEntity> = emptyList(),
     val categories: List<FinancialCategoryEntity> = emptyList(),
     val hiddenAccountIds: Set<Int> = emptySet(),
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
+    val terminalLogs: List<TerminalLog> = listOf(
+        TerminalLog("Welcome to kaka terminal v1.0", LogType.SUCCESS, isBold = true),
+        TerminalLog("Type /help for available commands.", LogType.INFO)
+    )
 )
 
 class AliasGuideViewModel(application: Application) : AndroidViewModel(application) {
@@ -25,16 +39,25 @@ class AliasGuideViewModel(application: Application) : AndroidViewModel(applicati
 
     private val terminalExecutor by lazy { com.projectkaka.inventory.search.TerminalExecutor(financeRepo) }
 
+    private val _terminalLogs = kotlinx.coroutines.flow.MutableStateFlow<List<TerminalLog>>(
+        listOf(
+            TerminalLog("Welcome to kaka terminal v1.0", LogType.SUCCESS, isBold = true),
+            TerminalLog("Type /help for available commands.", LogType.INFO)
+        )
+    )
+
     val uiState: StateFlow<AliasGuideUiState> = combine(
         financeRepo.getAllAccounts(),
         financeRepo.getAllCategories(),
-        prefs.hiddenAccountIds
-    ) { accounts, categories, hiddenIds ->
+        prefs.hiddenAccountIds,
+        _terminalLogs
+    ) { accounts, categories, hiddenIds, logs ->
         AliasGuideUiState(
             accounts = accounts,
             categories = categories,
             hiddenAccountIds = hiddenIds,
-            isLoading = false
+            isLoading = false,
+            terminalLogs = logs
         )
     }.stateIn(
         viewModelScope,
@@ -46,48 +69,42 @@ class AliasGuideViewModel(application: Application) : AndroidViewModel(applicati
         prefs.toggleAccountVisibility(accountId, isHidden)
     }
 
-    fun executeTerminalCommand(
-        input: String,
-        onResult: (com.projectkaka.inventory.search.TerminalResult) -> Unit
-    ) {
+    fun executeTerminalCommand(input: String, onActionRequested: (String) -> Unit = {}) {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) return
+        
+        appendLog(TerminalLog("$ $trimmed", LogType.ECHO, isBold = true))
+        
         viewModelScope.launch {
-            val result = terminalExecutor.execute(input)
-            onResult(result)
-        }
-    }
-
-    fun initializeAccountBalance(accountAlias: String, targetBalance: Double) {
-        viewModelScope.launch {
-            financeRepo.initializeAccountBalance(accountAlias, com.projectkaka.inventory.model.Money.fromDouble(targetBalance))
-        }
-    }
-
-    fun createAccount(name: String, type: com.projectkaka.inventory.data.local.entity.AccountType, initialBalance: Double) {
-        viewModelScope.launch {
-            val acc = AccountEntity(
-                name = name.trim().replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() },
-                type = type,
-                openingBalance = com.projectkaka.inventory.model.Money.fromDouble(initialBalance)
-            )
-            financeRepo.insertAccount(acc)
-        }
-    }
-
-    fun alterAccount(accountAlias: String, newName: String) {
-        viewModelScope.launch {
-            val account = financeRepo.resolveAccount(accountAlias)
-            if (account != null) {
-                financeRepo.updateAccount(account.copy(name = newName))
+            val result = terminalExecutor.execute(trimmed)
+            when (result) {
+                is com.projectkaka.inventory.search.TerminalResult.Success -> {
+                    appendLog(TerminalLog("✓ ${result.message}", LogType.SUCCESS))
+                }
+                is com.projectkaka.inventory.search.TerminalResult.Failure -> {
+                    appendLog(TerminalLog("✗ ${result.reason}", LogType.ERROR))
+                    if (result.hint != null) {
+                        appendLog(TerminalLog("  Hint: ${result.hint}", LogType.HINT))
+                    }
+                }
+                is com.projectkaka.inventory.search.TerminalResult.NeedsInput -> {
+                    appendLog(TerminalLog("? ${result.question}", LogType.WARNING))
+                    if (result.options.isNotEmpty()) {
+                        appendLog(TerminalLog("  Options: ${result.options.joinToString(", ")}", LogType.HINT))
+                    }
+                }
+                is com.projectkaka.inventory.search.TerminalResult.Pending -> {
+                    // Do nothing
+                }
+                is com.projectkaka.inventory.search.TerminalResult.PendingAction -> {
+                    appendLog(TerminalLog("→ Action requested: ${result.action}", LogType.WARNING))
+                    onActionRequested(result.action)
+                }
             }
         }
     }
-
-    fun deleteAccount(accountAlias: String) {
-        viewModelScope.launch {
-            val account = financeRepo.resolveAccount(accountAlias)
-            if (account != null) {
-                financeRepo.deleteAccount(account)
-            }
-        }
+    
+    private fun appendLog(log: TerminalLog) {
+        _terminalLogs.value = _terminalLogs.value + log
     }
 }

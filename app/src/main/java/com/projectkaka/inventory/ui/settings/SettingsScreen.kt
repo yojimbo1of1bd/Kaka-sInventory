@@ -68,18 +68,10 @@ fun SettingsScreen(
     onAppLockChange: (Boolean) -> Unit,
     isPinSet: Boolean,
     onAppPinChange: (String) -> Unit,
-    showQuickLog: Boolean,
-    onShowQuickLogChange: (Boolean) -> Unit,
-    defaultDebitAcc: String,
-    defaultDebitCat: String,
-    onDefaultDebitChange: (String, String) -> Unit,
-    defaultCreditAcc: String,
-    defaultCreditCat: String,
-    onDefaultCreditChange: (String, String) -> Unit,
     onOpenAccounts: () -> Unit,
     onOpenEmergencyContact: () -> Unit,
     onOpenExport: () -> Unit,
-    onOpenTerminal: () -> Unit,
+    onOpenBaskets: () -> Unit,
     alertsEnabled: Boolean,
     onAlertsEnabledChange: (Boolean) -> Unit,
     alertMethod: String,
@@ -94,6 +86,8 @@ fun SettingsScreen(
     onPermMicrophoneChange: (Boolean) -> Unit,
     permStorage: Boolean,
     onPermStorageChange: (Boolean) -> Unit,
+    businessMode: Boolean,
+    onBusinessModeChange: (Boolean) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -171,6 +165,16 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(24.dp))
             
+            // ── Business Mode ──
+            SettingsToggle(
+                title = "Business Mode",
+                subtitle = "Enable accrual accounting accounts (Prepaid, Unearned Revenue, AR, AP).",
+                checked = businessMode,
+                onCheckedChange = onBusinessModeChange
+            )
+
+            Spacer(Modifier.height(24.dp))
+            
             // ── Biometric App Lock ──
             SettingsToggle(
                 title = "Biometric App Lock",
@@ -198,33 +202,10 @@ fun SettingsScreen(
             
             Spacer(Modifier.height(24.dp))
             
-            // ── Quick Log Widget ──
-            SettingsToggle(
-                title = "Quick Log Widget",
-                subtitle = "Show Quick Log card on Dashboard.",
-                checked = showQuickLog,
-                onCheckedChange = onShowQuickLogChange
-            )
-            if (showQuickLog) {
-                var showQuickLogConfig by remember { mutableStateOf(false) }
-                OutlinedButton(
-                    onClick = { showQuickLogConfig = true },
-                    modifier = Modifier.padding(top = 8.dp)
-                ) {
-                    Text("Configure Quick Log Defaults")
-                }
-                
-                if (showQuickLogConfig) {
-                    QuickLogConfigDialog(
-                        defaultDebitAcc = defaultDebitAcc,
-                        defaultDebitCat = defaultDebitCat,
-                        onDefaultDebitChange = onDefaultDebitChange,
-                        defaultCreditAcc = defaultCreditAcc,
-                        defaultCreditCat = defaultCreditCat,
-                        onDefaultCreditChange = onDefaultCreditChange,
-                        onDismiss = { showQuickLogConfig = false }
-                    )
-                }
+            // ── Moving & Transportation (Baskets & Cartons) ──
+            SectionHeader("Moving & Transportation", "Organize items into boxes, carts, or cartons with scannable QR/barcodes.")
+            OutlinedButton(onClick = onOpenBaskets, modifier = Modifier.padding(top = 8.dp)) {
+                Text("Manage Moving Cartons & Baskets")
             }
 
             Spacer(Modifier.height(24.dp))
@@ -303,13 +284,7 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(24.dp))
             
-            // ══════════════════════════════════════════════════════════════
-            //  TERMINAL SECTION
-            // ══════════════════════════════════════════════════════════════
-            SectionHeader("Terminal", "Run kaka commands and view aliases.")
-            OutlinedButton(onClick = onOpenTerminal, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)) {
-                Text("Open Terminal Manual")
-            }
+
 
             Spacer(Modifier.height(32.dp))
             
@@ -424,51 +399,7 @@ private fun SettingsToggle(
     }
 }
 
-@Composable
-private fun QuickLogConfigDialog(
-    defaultDebitAcc: String,
-    defaultDebitCat: String,
-    onDefaultDebitChange: (String, String) -> Unit,
-    defaultCreditAcc: String,
-    defaultCreditCat: String,
-    onDefaultCreditChange: (String, String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Quick Log Defaults") },
-        text = {
-            Column {
-                Text("Debit Defaults", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
-                var dAcc by remember { mutableStateOf(defaultDebitAcc) }
-                var dCat by remember { mutableStateOf(defaultDebitCat) }
-                OutlinedTextField(
-                    value = dAcc, onValueChange = { dAcc = it; onDefaultDebitChange(dAcc, dCat) },
-                    label = { Text("Account") }, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), singleLine = true
-                )
-                OutlinedTextField(
-                    value = dCat, onValueChange = { dCat = it; onDefaultDebitChange(dAcc, dCat) },
-                    label = { Text("Category") }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), singleLine = true
-                )
-                
-                Text("Credit Defaults", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
-                var cAcc by remember { mutableStateOf(defaultCreditAcc) }
-                var cCat by remember { mutableStateOf(defaultCreditCat) }
-                OutlinedTextField(
-                    value = cAcc, onValueChange = { cAcc = it; onDefaultCreditChange(cAcc, cCat) },
-                    label = { Text("Account") }, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), singleLine = true
-                )
-                OutlinedTextField(
-                    value = cCat, onValueChange = { cCat = it; onDefaultCreditChange(cAcc, cCat) },
-                    label = { Text("Category") }, modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Done") }
-        }
-    )
-}
+
 
 
 

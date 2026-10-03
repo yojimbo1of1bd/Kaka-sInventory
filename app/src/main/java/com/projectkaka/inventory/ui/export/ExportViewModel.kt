@@ -20,6 +20,8 @@ data class ExportUiState(
     val lastCsvName: String? = null,
     val lastJsonName: String? = null,
     val lastKakaName: String? = null,
+    val lastPngName: String? = null,
+    val availableCategories: List<String> = emptyList(),
     val working: Boolean = false,
     val error: String? = null,
     val restoreResult: RestoreResult? = null
@@ -41,7 +43,16 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
     init {
         viewModelScope.launch {
             val rows = repository.exportSnapshot()
-            _uiState.update { it.copy(itemCount = rows.size) }
+            val categories = rows.map { it.category.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+                .sorted()
+            _uiState.update { 
+                it.copy(
+                    itemCount = rows.size,
+                    availableCategories = categories
+                ) 
+            }
         }
     }
 
@@ -60,6 +71,38 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
     fun exportKakaZip() {
         export { rows, fin ->
             ExportWriter.writeKakaZip(getApplication(), rows, fin)
+        }
+    }
+
+    fun exportVisualMap(category: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(working = true, error = null) }
+            runCatching {
+                val allRows = repository.exportSnapshot()
+                val targetRows = if (category.isBlank() || category.equals("all", ignoreCase = true)) {
+                    allRows
+                } else {
+                    allRows.filter { it.category.equals(category, ignoreCase = true) }
+                }
+
+                val bitmap = com.projectkaka.inventory.util.VisualMapGenerator.generateVisualMap(category, targetRows)
+                val safeCat = if (category.isBlank() || category.equals("all", ignoreCase = true)) "all" else category.lowercase().replace(" ", "_")
+                val filename = "visual_map_${safeCat}_${System.currentTimeMillis()}"
+                val uri = com.projectkaka.inventory.util.GalleryHelper.saveBitmapToGallery(getApplication(), bitmap, filename).getOrNull()
+                if (uri == null) throw IllegalStateException("Could not save visual map to gallery")
+                "$filename.png"
+            }.onSuccess { fileName ->
+                _uiState.update {
+                    it.copy(
+                        working = false,
+                        lastPngName = fileName
+                    )
+                }
+            }.onFailure { e ->
+                _uiState.update {
+                    it.copy(working = false, error = e.localizedMessage ?: "Visual map generation failed")
+                }
+            }
         }
     }
 

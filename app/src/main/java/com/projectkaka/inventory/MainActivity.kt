@@ -35,6 +35,22 @@ class MainActivity : FragmentActivity() {
         
         val app = application as KakaApplication
         
+        lifecycleScope.launch {
+            app.financeRepository.runInvariantCheck()
+        }
+        
+        /*
+         * APP LOCK SECURITY POLICY:
+         * 1. Cold Start: Always locked if appLockEnabled is true.
+         * 2. Stop/Resume (Backgrounding): Handled via `last_stop_time`. If the app is in the background 
+         *    longer than GRACE_PERIOD (3 seconds), it locks.
+         * 3. Configuration Change (Rotation): `savedInstanceState` persists `is_locked` and `last_stop_time`.
+         *    Rotation is typically under 3 seconds, so an unlocked app stays unlocked, and a locked app stays locked.
+         * 4. Permission Dialogs / External Activities: They trigger onStop() just like backgrounding.
+         *    If the external activity takes > 3 seconds (e.g. file picker, camera), the app will lock upon return.
+         * 5. Process Death: Handled via `savedInstanceState`. If recreated after a long time, the grace period 
+         *    check will evaluate to true and lock the app.
+         */
         // Lock on cold start if enabled, or restore and check grace period if process died
         if (savedInstanceState != null) {
             lockedState.value = savedInstanceState.getBoolean("is_locked", app.preferences.appLockEnabled.value)

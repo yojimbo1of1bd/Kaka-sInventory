@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -20,6 +21,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -112,7 +114,7 @@ fun DraftScreen(
 private fun DraftCard(
     index: Int,
     draft: ItemEntity,
-    onCommit: (String, String, String, Double) -> Unit,
+    onCommit: (String, String, String, String) -> Unit,
     onDiscard: () -> Unit
 ) {
     var name by remember(draft.id) { mutableStateOf("") }
@@ -153,6 +155,25 @@ private fun DraftCard(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            ) {
+                val presets = listOf("Prescriptions & Slips", "Electronics", "Furniture", "Clothing", "Kitchen", "Tools")
+                items(presets) { preset ->
+                    FilterChip(
+                        selected = category.equals(preset, ignoreCase = true),
+                        onClick = {
+                            category = preset
+                            if (preset == "Prescriptions & Slips" && name.isBlank()) {
+                                name = "Prescription Slip"
+                            }
+                        },
+                        label = { Text(preset, fontSize = 11.sp) }
+                    )
+                }
+            }
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -190,7 +211,7 @@ private fun DraftCard(
                     Text("Discard", color = MaterialTheme.colorScheme.error)
                 }
                 Button(onClick = {
-                    onCommit(name, category, location, value.toDoubleOrNull() ?: 0.0)
+                    onCommit(name, category, location, value)
                 }) { Text("Activate") }
             }
         }

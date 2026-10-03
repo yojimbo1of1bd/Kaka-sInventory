@@ -90,14 +90,14 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
         filterSettled.value = settled
     }
 
-    fun addEntry(contactName: String, contactPhone: String, amount: Double, type: LedgerType, note: String, accountId: Int, dueDate: Long? = null) {
-        if (contactName.isBlank() || amount <= 0.0) return
+    fun addEntry(contactName: String, contactPhone: String, amountStr: String, type: LedgerType, note: String, accountId: Int, dueDate: Long? = null) {
+        if (contactName.isBlank()) return
         viewModelScope.launch {
             financeRepo.issueDebt(
                 entry = LedgerEntryEntity(
                     contactName = contactName.trim(),
                     contactPhone = contactPhone.trim(),
-                    amount = com.projectkaka.inventory.model.Money.fromDouble(amount),
+                    amount = try { com.projectkaka.inventory.model.Money.fromDecimalString(amountStr) } catch (e: Exception) { com.projectkaka.inventory.model.Money.ZERO },
                     type = type,
                     note = note.trim(),
                     dueDate = dueDate

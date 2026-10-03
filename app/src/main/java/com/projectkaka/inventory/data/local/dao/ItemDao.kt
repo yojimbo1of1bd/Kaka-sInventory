@@ -36,11 +36,14 @@ interface ItemDao {
     @Query("SELECT * FROM items WHERE status = 'ACTIVE' AND is_draft = 0 ORDER BY date_added DESC")
     fun getActiveItems(): Flow<List<ItemEntity>>
 
+    @Query("SELECT * FROM items WHERE status = 'ACTIVE' ORDER BY date_added DESC")
+    fun getAllInventoryItems(): Flow<List<ItemEntity>>
+
     @Query("SELECT * FROM items WHERE is_draft = 1 ORDER BY date_added DESC")
     fun getDraftItems(): Flow<List<ItemEntity>>
 
-    @Query("UPDATE items SET status = :newStatus, estimated_value = :recoveredValue WHERE id = :itemId")
-    suspend fun updateItemStatus(itemId: Int, newStatus: ItemStatus, recoveredValue: com.projectkaka.inventory.model.Money)
+    @Query("UPDATE items SET status = :newStatus, estimated_value = :recoveredValue, linked_journal_id = :journalId WHERE id = :itemId")
+    suspend fun updateItemStatus(itemId: Int, newStatus: ItemStatus, recoveredValue: com.projectkaka.inventory.model.Money, journalId: Int? = null)
 
     @Transaction
     @Query("SELECT * FROM items WHERE id = :id")

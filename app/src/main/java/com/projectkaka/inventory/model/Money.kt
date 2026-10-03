@@ -1,5 +1,7 @@
 package com.projectkaka.inventory.model
 
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -10,26 +12,26 @@ value class Money(val minorUnits: Long) : Comparable<Money> {
     override fun compareTo(other: Money): Int = this.minorUnits.compareTo(other.minorUnits)
 
     fun format(locale: Locale = Locale.getDefault()): String {
-        val major = minorUnits / 100.0
+        val major = BigDecimal(minorUnits).divide(BigDecimal(100), 2, RoundingMode.HALF_UP)
         return NumberFormat.getCurrencyInstance(locale).format(major)
     }
 
     companion object {
-        /**
-         * Converts a user-input decimal string into Money (integer minor units).
-         * Uses Math.round to ensure explicit half-up rounding, avoiding truncation
-         * issues where 10.01 * 100.0 becomes 1000.9999999 -> 1000 instead of 1001.
-         */
-        fun fromDecimalString(value: String): Money {
-            val d = value.toDoubleOrNull() ?: 0.0
-            return fromDouble(d)
-        }
+        val ZERO = Money(0L)
 
         /**
-         * Converts a Double into Money (integer minor units).
+         * Converts a user-input decimal string into Money (integer minor units).
+         * Throws IllegalArgumentException on malformed, non-finite, or out-of-range input.
          */
-        fun fromDouble(value: Double): Money {
-            return Money(Math.round(value * 100))
+        fun fromDecimalString(value: String): Money {
+            val trimmed = value.trim()
+            if (trimmed.isEmpty()) return ZERO
+            return try {
+                val bd = BigDecimal(trimmed)
+                Money(bd.multiply(BigDecimal(100)).setScale(0, RoundingMode.HALF_UP).longValueExact())
+            } catch (e: Exception) {
+                throw IllegalArgumentException("Invalid monetary value: $value")
+            }
         }
     }
 }

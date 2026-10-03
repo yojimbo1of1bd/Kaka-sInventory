@@ -14,6 +14,18 @@ object SearchHelper {
             .any { it.isNotEmpty() && it == lower }
     }
 
+    /**
+     * Strict matching for the terminal.
+     * Requires the input to exactly match either the primary name or one of the aliases.
+     */
+    fun matchesExact(input: String, primaryName: String, aliases: String): Boolean {
+        val lower = input.lowercase().trim()
+        if (primaryName.lowercase().trim() == lower) return true
+        return aliases.split(",")
+            .map { it.trim().lowercase() }
+            .any { it.isNotEmpty() && it == lower }
+    }
+
     /** Escapes SQLite LIKE metacharacters so user text cannot act as a wildcard. */
     fun escapeLike(value: String): String = value
         .replace("\\", "\\\\")

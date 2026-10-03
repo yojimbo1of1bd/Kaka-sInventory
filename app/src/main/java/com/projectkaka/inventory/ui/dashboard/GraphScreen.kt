@@ -164,7 +164,7 @@ fun GraphScreen(
         }
         
         // ── Chart ──
-        Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.weight(1f).fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
             if (state.isLoading) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             } else if (state.entryModel == null) {
@@ -183,11 +183,17 @@ fun GraphScreen(
                 }
             } else {
                 val horizontalAxisValueFormatter = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
-                    state.labels[value] ?: ""
+                    state.labels[value.toInt()] ?: ""
                 }
                 
                 Chart(
-                    chart = lineChart(),
+                    chart = lineChart(
+                        lines = state.seriesNames.mapIndexed { index, _ ->
+                            com.patrykandpatrick.vico.compose.chart.line.lineSpec(
+                                lineColor = SeriesColors[index % SeriesColors.size]
+                            )
+                        }
+                    ),
                     model = state.entryModel!!,
                     startAxis = rememberStartAxis(),
                     bottomAxis = rememberBottomAxis(valueFormatter = horizontalAxisValueFormatter),

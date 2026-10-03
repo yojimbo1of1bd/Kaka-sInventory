@@ -2,16 +2,16 @@ package com.projectkaka.inventory.search
 
 sealed interface TerminalCommand {
     data class Financial(
-        val amount: Double,
+        val amount: com.projectkaka.inventory.model.Money,
         val isCredit: Boolean,
         val tokens: List<String>,
         val dateToken: String? = null
     ) : TerminalCommand
 
-    data class Init(val accountToken: String, val amount: Double) : TerminalCommand
+    data class Init(val accountToken: String, val amount: com.projectkaka.inventory.model.Money) : TerminalCommand
     
     data class Transfer(
-        val amount: Double, 
+        val amount: com.projectkaka.inventory.model.Money, 
         val fromToken: String, 
         val toToken: String, 
         val noteTokens: List<String>
@@ -19,20 +19,20 @@ sealed interface TerminalCommand {
 
     data class LedgerDue(
         val isOut: Boolean, 
-        val amount: Double, 
+        val amount: com.projectkaka.inventory.model.Money, 
         val contactToken: String, 
         val dateToken: String? = null
     ) : TerminalCommand
 
     data class LedgerSettle(
         val contactToken: String, 
-        val amount: Double?
+        val amount: com.projectkaka.inventory.model.Money?
     ) : TerminalCommand
 
     data class AccountAdd(
         val name: String, 
         val typeToken: String, 
-        val balance: Double?
+        val balance: com.projectkaka.inventory.model.Money?
     ) : TerminalCommand
 
     data class AccountAction(
@@ -44,6 +44,18 @@ sealed interface TerminalCommand {
         val targetType: String, // tx, account, entry
         val selector: String
     ) : TerminalCommand
+
+    data class BalanceCheck(val accountToken: String) : TerminalCommand
+
+    data class Report(val reportType: String, val arg: String? = null) : TerminalCommand
+
+    data class AccountAlter(
+        val accountToken: String,
+        val action: String,
+        val newName: String
+    ) : TerminalCommand
+
+    data object Reset : TerminalCommand
 
     data class KakaAction(
         val action: String, // graph, ledger, accounts, export, settings, search
@@ -61,4 +73,5 @@ sealed interface TerminalResult {
     data class Failure(val reason: String, val hint: String? = null) : TerminalResult
     data class NeedsInput(val question: String, val options: List<String>) : TerminalResult
     data object Pending : TerminalResult
+    data class PendingAction(val action: String, val arg: String? = null) : TerminalResult
 }

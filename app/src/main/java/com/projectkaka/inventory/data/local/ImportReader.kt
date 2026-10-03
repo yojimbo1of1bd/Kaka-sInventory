@@ -76,7 +76,12 @@ object ImportReader {
                 return if (isV3) {
                     com.projectkaka.inventory.model.Money(obj.optLong(key, 0L))
                 } else {
-                    com.projectkaka.inventory.model.Money.fromDouble(obj.optDouble(key, 0.0))
+                    val strValue = obj.optString(key, "0")
+                    try {
+                        com.projectkaka.inventory.model.Money.fromDecimalString(strValue)
+                    } catch (e: Exception) {
+                        com.projectkaka.inventory.model.Money.ZERO
+                    }
                 }
             }
 
@@ -89,6 +94,7 @@ object ImportReader {
             var ledgerEntriesRestored = 0
 
             db.withTransaction {
+                db.clearAllTables()
                 if (itemsArr != null) {
                     for (i in 0 until itemsArr.length()) {
                         val itemObj = itemsArr.getJSONObject(i)
@@ -169,19 +175,63 @@ object ImportReader {
                         for (i in 0 until txsArr.length()) {
                             val tObj = txsArr.getJSONObject(i)
                             val id = tObj.optInt("id", 0)
-                            val tx = TransactionEntity(
-                                id = if (id > 0) id else 0,
-                                amount = parseMoney(tObj, "amount"),
-                                accountId = tObj.getInt("accountId"),
-                                categoryId = if (tObj.isNull("categoryId")) null else tObj.getInt("categoryId"),
-                                transferId = tObj.optString("transferId", "").takeIf { it.isNotBlank() },
-                                counterAccountId = if (tObj.isNull("counterAccountId")) null else tObj.getInt("counterAccountId"),
-                                type = com.projectkaka.inventory.data.local.entity.TransactionType.valueOf(tObj.optString("type", "EXPENSE")),
-                                isCredit = tObj.getBoolean("isCredit"),
-                                note = tObj.optString("note", ""),
-                                timestamp = tObj.optLong("timestamp", System.currentTimeMillis())
+                            val amount = parseMoney(tObj, "amount")
+                            val accountId = tObj.getInt("accountId")
+                            val counterAccountIdRaw = if (tObj.isNull("counterAccountId")) null else tObj.getInt("counterAccountId")
+                            val isCredit = tObj.getBoolean("isCredit")
+                            val note = tObj.optString("note", "")
+                            val timestamp = tObj.optLong("timestamp", System.currentTimeMillis())
+                            val typeStr = tObj.optString("type", "EXPENSE")
+                            
+                            val journalEntryId = db.journalDao().insertJournalEntry(
+                                com.projectkaka.inventory.data.local.entity.JournalEntryEntity(
+                                    id = if (id > 0) id else 0,
+                                    timestamp = timestamp,
+                                    description = note,
+                                    status = com.projectkaka.inventory.data.local.entity.JournalStatus.POSTED,
+                                    approvalStatus = com.projectkaka.inventory.data.local.entity.ApprovalStatus.APPROVED
+                                )
+                            ).toInt()
+
+                            db.journalDao().insertPosting(
+                                com.projectkaka.inventory.data.local.entity.PostingEntity(
+                                    journalEntryId = journalEntryId,
+                                    accountId = accountId,
+                                    amount = amount,
+                                    isCredit = isCredit,
+                                    note = note
+                                )
                             )
-                            db.financeDao().insertTransaction(tx)
+
+                            val targetCounterId = if (counterAccountIdRaw != null) {
+                                counterAccountIdRaw
+                            } else {
+                                val accName = when (typeStr) {
+                                    "INCOME" -> "Income"
+                                    "DEBT_ISSUE", "DEBT_SETTLE" -> if (isCredit) "Liabilities" else "Assets"
+                                    else -> "Expenses"
+                                }
+                                val existingAcc = db.financeDao().getAccountByName(accName)
+                                if (existingAcc != null) existingAcc.id
+                                else {
+                                    val accType = when (typeStr) {
+                                        "INCOME" -> AccountType.REVENUE
+                                        "DEBT_ISSUE", "DEBT_SETTLE" -> if (isCredit) AccountType.LIABILITY else AccountType.ASSET
+                                        else -> AccountType.EXPENSE
+                                    }
+                                    db.financeDao().insertAccount(AccountEntity(name = accName, type = accType, openingBalance = com.projectkaka.inventory.model.Money.ZERO)).toInt()
+                                }
+                            }
+                            
+                            db.journalDao().insertPosting(
+                                com.projectkaka.inventory.data.local.entity.PostingEntity(
+                                    journalEntryId = journalEntryId,
+                                    accountId = targetCounterId,
+                                    amount = amount,
+                                    isCredit = !isCredit,
+                                    note = note
+                                )
+                            )
                             transactionsRestored++
                         }
                     }
