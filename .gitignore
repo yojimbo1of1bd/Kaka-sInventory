@@ -10,7 +10,6 @@
 
 # Java / Gradle build outputs
 build/
-*/build/
 app/build/
 .gradle/
 .kotlin/
