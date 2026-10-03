@@ -12,11 +12,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import com.projectkaka.inventory.data.local.relation.DocumentWithPages
+import com.projectkaka.inventory.data.repository.FinancialExportData
 import com.projectkaka.inventory.data.local.ImportReader
 import com.projectkaka.inventory.data.local.RestoreResult
 
 data class ExportUiState(
     val itemCount: Int = 0,
+    val documentCount: Int = 0,
     val lastCsvName: String? = null,
     val lastJsonName: String? = null,
     val lastKakaName: String? = null,
@@ -36,6 +39,7 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
     private val db = getApplication<KakaApplication>().database
     private val repository = getApplication<KakaApplication>().repository
     private val financeRepository = getApplication<KakaApplication>().financeRepository
+    private val documentRepository = getApplication<KakaApplication>().documentRepository
 
     private val _uiState = MutableStateFlow(ExportUiState())
     val uiState: StateFlow<ExportUiState> = _uiState.asStateFlow()
@@ -43,6 +47,7 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
     init {
         viewModelScope.launch {
             val rows = repository.exportSnapshot()
+            val docCount = documentRepository.getAllDocumentsWithPagesSnapshot().size
             val categories = rows.map { it.category.trim() }
                 .filter { it.isNotEmpty() }
                 .distinct()
@@ -50,6 +55,7 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { 
                 it.copy(
                     itemCount = rows.size,
+                    documentCount = docCount,
                     availableCategories = categories
                 ) 
             }
@@ -57,20 +63,20 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun exportCsv() {
-        export { rows, _ ->
+        export { rows, _, _ ->
             ExportWriter.writeCsv(getApplication(), rows)
         }
     }
 
     fun exportJson() {
-        export { rows, fin ->
-            ExportWriter.writeJson(getApplication(), rows, fin)
+        export { rows, docs, fin ->
+            ExportWriter.writeJson(getApplication(), rows, docs, fin)
         }
     }
 
     fun exportKakaZip() {
-        export { rows, fin ->
-            ExportWriter.writeKakaZip(getApplication(), rows, fin)
+        export { rows, docs, fin ->
+            ExportWriter.writeKakaZip(getApplication(), rows, docs, fin)
         }
     }
 
@@ -107,14 +113,15 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun export(
-        writer: suspend (List<ItemExportRow>, com.projectkaka.inventory.data.repository.FinancialExportData) -> String
+        writer: suspend (List<ItemExportRow>, List<DocumentWithPages>, FinancialExportData) -> String
     ) {
         viewModelScope.launch {
             _uiState.update { it.copy(working = true, error = null) }
             runCatching {
                 val rows = repository.exportSnapshot()
+                val docs = documentRepository.getAllDocumentsWithPagesSnapshot()
                 val financeData = financeRepository.exportFinancialSnapshot()
-                writer(rows, financeData)
+                writer(rows, docs, financeData)
             }.onSuccess { fileName ->
                 val ext = fileName.substringAfterLast('.', "").lowercase()
                 _uiState.update {
@@ -140,9 +147,10 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
                 ImportReader.restoreKakaZip(getApplication(), uri, db)
             }.onSuccess { result ->
                 _uiState.update { it.copy(working = false, restoreResult = result) }
-                // refresh count
+                // refresh counts
                 val rows = repository.exportSnapshot()
-                _uiState.update { it.copy(itemCount = rows.size) }
+                val docCount = documentRepository.getAllDocumentsWithPagesSnapshot().size
+                _uiState.update { it.copy(itemCount = rows.size, documentCount = docCount) }
             }.onFailure { e ->
                 _uiState.update {
                     it.copy(working = false, error = e.localizedMessage ?: "Import failed")

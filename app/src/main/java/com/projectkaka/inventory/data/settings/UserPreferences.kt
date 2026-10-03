@@ -117,6 +117,14 @@ class UserPreferences(context: Context) {
     private val _permStorage = MutableStateFlow(prefs.getBoolean(KEY_PERM_STORAGE, true))
     val permStorage: StateFlow<Boolean> = _permStorage.asStateFlow()
 
+    private val _hasSeenDocMode = MutableStateFlow(prefs.getBoolean(KEY_HAS_SEEN_DOC_MODE, false))
+    val hasSeenDocMode: StateFlow<Boolean> = _hasSeenDocMode.asStateFlow()
+
+    fun setHasSeenDocMode(seen: Boolean) {
+        prefs.edit().putBoolean(KEY_HAS_SEEN_DOC_MODE, seen).apply()
+        _hasSeenDocMode.value = seen
+    }
+
     fun setPermissionEnabled(key: String, enabled: Boolean) {
         prefs.edit().putBoolean(key, enabled).apply()
         when (key) {
@@ -295,5 +303,6 @@ class UserPreferences(context: Context) {
         const val KEY_LOCKOUT_ATTEMPTS = "lockout_attempts"
         const val KEY_LOCKOUT_UNTIL = "lockout_until"
         const val KEY_BUSINESS_MODE = "business_mode"
+        const val KEY_HAS_SEEN_DOC_MODE = "has_seen_doc_mode"
     }
 }

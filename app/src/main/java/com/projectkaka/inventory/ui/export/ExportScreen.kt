@@ -104,7 +104,7 @@ fun ExportScreen(
 
         Column(Modifier.padding(16.dp)) {
             Text(
-                text = "${state.itemCount} item(s) in the local store.",
+                text = "${state.itemCount} item(s) • ${state.documentCount} document(s) in local store",
                 color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Bold
@@ -303,7 +303,7 @@ fun ExportScreen(
             }
             state.restoreResult?.let {
                 Text(
-                    text = "Restore Complete: ${it.itemsRestored} items, ${it.accountsRestored} accounts, ${it.categoriesRestored} categories, ${it.transactionsRestored} transactions, ${it.ledgerEntriesRestored} ledger entries.",
+                    text = "Restore Complete: ${it.itemsRestored} items, ${it.documentsRestored} documents, ${it.accountsRestored} accounts, ${it.categoriesRestored} categories, ${it.transactionsRestored} transactions, ${it.ledgerEntriesRestored} ledger entries.",
                     color = MaterialTheme.colorScheme.primary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold

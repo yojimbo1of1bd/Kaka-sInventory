@@ -5,8 +5,10 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.projectkaka.inventory.data.local.relation.DocumentWithPages
 import com.projectkaka.inventory.data.repository.FinancialExportData
 import com.projectkaka.inventory.data.repository.ItemExportRow
+import com.projectkaka.inventory.util.FinanceModelClashDetector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -22,10 +24,10 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * Writes a read-only snapshot of the inventory to a file inside the device's Downloads directory.
- * 
- * On Android 10+ (API 29+), uses MediaStore API for proper scoped storage support.
- * On older versions, falls back to direct file I/O.
+ * Writes a read-only snapshot of the inventory, documents, and finance to a file inside
+ * the device's Downloads directory.
+ *
+ * Scoped storage compliant (MediaStore on Android 10+).
  */
 object ExportWriter {
 
@@ -36,10 +38,6 @@ object ExportWriter {
 
     // ── MediaStore-based writing for Android 10+ ──
 
-    /**
-     * Creates or opens a file in Downloads/ProjectKaka using MediaStore (API 29+)
-     * or direct file I/O (API < 29). Returns the output stream and the display name.
-     */
     private fun createExportFile(
         context: Context,
         fileName: String,
@@ -57,7 +55,6 @@ object ExportWriter {
                 ?: throw Exception("Failed to create MediaStore entry for $fileName")
             val os = resolver.openOutputStream(uri)
                 ?: throw Exception("Failed to open output stream for $fileName")
-            // Mark as not pending after write completes — caller must close the stream
             return object : OutputStream() {
                 override fun write(b: Int) = os.write(b)
                 override fun write(b: ByteArray) = os.write(b)
@@ -77,22 +74,6 @@ object ExportWriter {
             }
             val file = File(dir, fileName)
             return FileOutputStream(file) to fileName
-        }
-    }
-
-    /**
-     * Legacy export dir for operations that still need a File reference
-     * (e.g. ZIP backup which needs random access).
-     */
-    private fun legacyExportDir(context: Context): File {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Use app-specific cache, then copy via MediaStore
-            File(context.cacheDir, "exports").apply { if (!exists()) mkdirs() }
-        } else {
-            @Suppress("DEPRECATION")
-            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), DIR_NAME).apply {
-                if (!exists()) mkdirs()
-            }
         }
     }
 
@@ -132,11 +113,12 @@ object ExportWriter {
     suspend fun writeJson(
         context: Context,
         rows: List<ItemExportRow>,
+        documents: List<DocumentWithPages> = emptyList(),
         financeData: FinancialExportData? = null
     ): String =
         withContext(Dispatchers.IO) {
             val fileName = "kaka_inventory_${timestamp()}.json"
-            val root = generateJsonObject(rows, financeData)
+            val root = generateJsonObject(rows, documents, financeData)
             val (outputStream, name) = createExportFile(context, fileName, "application/json")
             outputStream.use { it.write(root.toString(2).toByteArray(Charsets.UTF_8)) }
             name
@@ -145,17 +127,16 @@ object ExportWriter {
     suspend fun writeKakaZip(
         context: Context,
         rows: List<ItemExportRow>,
+        documents: List<DocumentWithPages> = emptyList(),
         financeData: FinancialExportData? = null
     ): String =
         withContext(Dispatchers.IO) {
             val fileName = "kaka_backup_${timestamp()}.kaka"
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                // Write to a temp file first, then copy into MediaStore
                 val tempFile = File(context.cacheDir, fileName)
-                writeZipToFile(context, tempFile, rows, financeData)
+                writeZipToFile(context, tempFile, rows, documents, financeData)
                 
-                // Now copy into Downloads via MediaStore
                 val (outputStream, name) = createExportFile(context, fileName, "application/zip")
                 outputStream.use { os ->
                     FileInputStream(tempFile).use { fis ->
@@ -170,7 +151,7 @@ object ExportWriter {
                     if (!exists()) mkdirs()
                 }
                 val file = File(dir, fileName)
-                writeZipToFile(context, file, rows, financeData)
+                writeZipToFile(context, file, rows, documents, financeData)
                 fileName
             }
         }
@@ -179,17 +160,18 @@ object ExportWriter {
         context: Context,
         file: File,
         rows: List<ItemExportRow>,
+        documents: List<DocumentWithPages>,
         financeData: FinancialExportData?
     ) {
         ZipOutputStream(FileOutputStream(file)).use { zos ->
             // 1. Write the JSON data
-            val root = generateJsonObject(rows, financeData)
+            val root = generateJsonObject(rows, documents, financeData)
             val jsonBytes = root.toString(2).toByteArray(Charsets.UTF_8)
             zos.putNextEntry(ZipEntry("data.json"))
             zos.write(jsonBytes)
             zos.closeEntry()
 
-            // 2. Add all the images
+            // 2. Add inventory item images
             val imageDir = LocalImageStore.imageDir(context)
             if (imageDir.exists()) {
                 rows.forEach { row ->
@@ -205,18 +187,40 @@ object ExportWriter {
                     }
                 }
             }
+
+            // 3. Add document vault images (crisp multi-page doc images)
+            val docDir = DocumentImageStore.docDir(context)
+            if (docDir.exists()) {
+                documents.forEach { docWithPages ->
+                    docWithPages.sortedPages.forEach { page ->
+                        if (page.imagePath.isNotBlank()) {
+                            val docImg = File(page.imagePath)
+                            if (docImg.exists() && docImg.isFile) {
+                                zos.putNextEntry(ZipEntry("doc_images/${docImg.name}"))
+                                FileInputStream(docImg).use { fis ->
+                                    fis.copyTo(zos)
+                                }
+                                zos.closeEntry()
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     private fun generateJsonObject(
         rows: List<ItemExportRow>,
+        documents: List<DocumentWithPages>,
         financeData: FinancialExportData?
     ): JSONObject {
         val root = JSONObject()
-        root.put("version", 3)
+        root.put("version", 4)
         root.put("exportedAt", System.currentTimeMillis())
         root.put("itemCount", rows.size)
+        root.put("documentCount", documents.size)
 
+        // ── 1. Items ──
         val items = JSONArray()
         rows.forEach { row ->
             val obj = JSONObject()
@@ -228,7 +232,6 @@ object ExportWriter {
             obj.put("status", row.status)
             obj.put("isDraft", row.isDraft)
             obj.put("dateAdded", row.dateAdded)
-            // Use just the filename for paths inside the zip so they restore cleanly
             obj.put("imageName", File(row.imagePath).name)
             obj.put("imagePath", row.imagePath)
 
@@ -246,6 +249,40 @@ object ExportWriter {
         }
         root.put("items", items)
 
+        // ── 2. Document Vault (Multi-page) ──
+        val docsArr = JSONArray()
+        documents.forEach { docWithPages ->
+            val doc = docWithPages.document
+            val docObj = JSONObject().apply {
+                put("id", doc.id)
+                put("title", doc.title)
+                put("docType", doc.docType)
+                put("pageCount", doc.pageCount)
+                put("coverImageName", File(doc.coverImagePath).name)
+                put("notes", doc.notes)
+                put("issueDate", doc.issueDate)
+                if (doc.expiryDate != null) put("expiryDate", doc.expiryDate)
+                if (doc.linkedItemId != null) put("linkedItemId", doc.linkedItemId)
+                put("createdAt", doc.createdAt)
+                put("isArchived", doc.isArchived)
+
+                val pagesArr = JSONArray()
+                docWithPages.sortedPages.forEach { page ->
+                    pagesArr.put(JSONObject().apply {
+                        put("id", page.id)
+                        put("pageNumber", page.pageNumber)
+                        put("imageName", File(page.imagePath).name)
+                        put("pageNote", page.pageNote)
+                        put("createdAt", page.createdAt)
+                    })
+                }
+                put("pages", pagesArr)
+            }
+            docsArr.put(docObj)
+        }
+        root.put("documents", docsArr)
+
+        // ── 3. Finance & Liability Ledger (with Clash Safeguard) ──
         if (financeData != null) {
             val finObj = JSONObject()
             
@@ -292,23 +329,38 @@ object ExportWriter {
             }
             finObj.put("transactions", txs)
 
-            val ledgers = JSONArray()
-            financeData.ledgerEntries.forEach { le ->
-                ledgers.put(JSONObject().apply {
-                    put("id", le.id)
-                    put("contactName", le.contactName)
-                    put("contactPhone", le.contactPhone)
-                    put("amount", le.amount.minorUnits)
-                    put("type", le.type.name)
-                    put("isSettled", le.isSettled)
-                    put("note", le.note)
-                    put("dueDate", le.dueDate)
-                    if (le.accountId != null) put("accountId", le.accountId)
-                    if (le.linkedTransactionId != null) put("linkedTransactionId", le.linkedTransactionId)
-                    put("createdAt", le.createdAt)
-                })
+            // Audit liability ledger for potential conflicts with the double-entry finance model
+            val clashCheck = FinanceModelClashDetector.evaluate(
+                accounts = financeData.accounts,
+                transactions = financeData.transactions,
+                ledgerEntries = financeData.ledgerEntries
+            )
+
+            if (clashCheck.hasClash) {
+                // Safely skip exporting the liability ledger to prevent financial model corruption
+                finObj.put("liabilityLedgerSkippedDueToClash", true)
+                val reasons = JSONArray()
+                clashCheck.clashReasons.forEach { reasons.put(it) }
+                finObj.put("liabilityLedgerClashReasons", reasons)
+            } else {
+                val ledgers = JSONArray()
+                financeData.ledgerEntries.forEach { le ->
+                    ledgers.put(JSONObject().apply {
+                        put("id", le.id)
+                        put("contactName", le.contactName)
+                        put("contactPhone", le.contactPhone)
+                        put("amount", le.amount.minorUnits)
+                        put("type", le.type.name)
+                        put("isSettled", le.isSettled)
+                        put("note", le.note)
+                        put("dueDate", le.dueDate)
+                        if (le.accountId != null) put("accountId", le.accountId)
+                        if (le.linkedTransactionId != null) put("linkedTransactionId", le.linkedTransactionId)
+                        put("createdAt", le.createdAt)
+                    })
+                }
+                finObj.put("ledgerEntries", ledgers)
             }
-            finObj.put("ledgerEntries", ledgers)
 
             root.put("finance", finObj)
         }
@@ -316,7 +368,6 @@ object ExportWriter {
         return root
     }
 
-    /** RFC 4180 style quoting: wrap in quotes and double any embedded quotes. */
     private fun csv(value: String): String {
         val needsQuotes = value.contains(',') || value.contains('"') || value.contains('\n')
         val escaped = value.replace("\"", "\"\"")

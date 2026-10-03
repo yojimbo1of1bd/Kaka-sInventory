@@ -17,6 +17,9 @@ import com.projectkaka.inventory.data.local.entity.BasketEntity
 import com.projectkaka.inventory.data.local.entity.BasketItemCrossRef
 import com.projectkaka.inventory.data.local.entity.FinancialCategoryEntity
 import com.projectkaka.inventory.data.local.entity.ItemEntity
+import com.projectkaka.inventory.data.local.dao.DocumentDao
+import com.projectkaka.inventory.data.local.entity.DocumentEntity
+import com.projectkaka.inventory.data.local.entity.DocumentPageEntity
 import com.projectkaka.inventory.data.local.entity.LedgerEntryEntity
 import com.projectkaka.inventory.data.local.entity.TransactionEntity
 import com.projectkaka.inventory.data.local.entity.JournalEntryEntity
@@ -32,9 +35,11 @@ import com.projectkaka.inventory.data.local.entity.PostingEntity
         JournalEntryEntity::class,
         PostingEntity::class,
         BasketEntity::class,
-        BasketItemCrossRef::class
+        BasketItemCrossRef::class,
+        DocumentEntity::class,
+        DocumentPageEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -45,6 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun financeDao(): FinanceDao
     abstract fun journalDao(): com.projectkaka.inventory.data.local.dao.JournalDao
     abstract fun basketDao(): BasketDao
+    abstract fun documentDao(): DocumentDao
 
     companion object {
         private const val DATABASE_NAME = "kaka_inventory.db"
@@ -61,7 +67,11 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     // Fast sequential writes for burst photo ingestion.
                     .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                    .addMigrations(
+                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+                        MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12
+                    )
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
@@ -425,6 +435,53 @@ abstract class AppDatabase : RoomDatabase() {
                     """.trimIndent()
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_basket_items_item_id` ON `basket_items` (`item_id`)")
+            }
+        }
+
+        /**
+         * v11 → v12: Create documents and document_pages tables for sovereign multi-page Document Vault.
+         */
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `documents` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `doc_type` TEXT NOT NULL,
+                        `page_count` INTEGER NOT NULL DEFAULT 1,
+                        `cover_image_path` TEXT NOT NULL,
+                        `notes` TEXT NOT NULL DEFAULT '',
+                        `issue_date` INTEGER NOT NULL,
+                        `expiry_date` INTEGER,
+                        `linked_item_id` INTEGER,
+                        `created_at` INTEGER NOT NULL,
+                        `is_archived` INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_documents_doc_type` ON `documents` (`doc_type`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_documents_issue_date` ON `documents` (`issue_date`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_documents_expiry_date` ON `documents` (`expiry_date`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_documents_linked_item_id` ON `documents` (`linked_item_id`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_documents_is_archived` ON `documents` (`is_archived`)")
+
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `document_pages` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `document_id` INTEGER NOT NULL,
+                        `page_number` INTEGER NOT NULL,
+                        `image_path` TEXT NOT NULL,
+                        `thumbnail_path` TEXT NOT NULL DEFAULT '',
+                        `page_note` TEXT NOT NULL DEFAULT '',
+                        `created_at` INTEGER NOT NULL,
+                        FOREIGN KEY(`document_id`) REFERENCES `documents`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_document_pages_document_id` ON `document_pages` (`document_id`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_document_pages_document_id_page_number` ON `document_pages` (`document_id`, `page_number`)")
             }
         }
     }

@@ -55,7 +55,8 @@ data class DashboardUiState(
     val triggerEmergencyAlert: Boolean = false,
     val overspendStrikeCount: Int = 0,
     val accountBalances: List<com.projectkaka.inventory.data.local.entity.AccountEntity> = emptyList(),
-    val categories: List<com.projectkaka.inventory.data.local.entity.FinancialCategoryEntity> = emptyList()
+    val categories: List<com.projectkaka.inventory.data.local.entity.FinancialCategoryEntity> = emptyList(),
+    val documents: List<com.projectkaka.inventory.data.local.entity.DocumentEntity> = emptyList()
 )
 
 private data class ListState(
@@ -84,6 +85,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val repository = getApplication<KakaApplication>().repository
     private val financeRepo = getApplication<KakaApplication>().financeRepository
+    private val documentRepo = getApplication<KakaApplication>().documentRepository
     private val prefs = getApplication<KakaApplication>().preferences
 
     private val _query = MutableStateFlow("")
@@ -207,25 +209,45 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         QuickLogState(show, dAcc, dCat, cAcc, cCat)
     }
 
+    private data class DashboardFinanceData(
+        val alert: Boolean,
+        val strikes: Int,
+        val balances: List<com.projectkaka.inventory.data.local.entity.AccountEntity>,
+        val cats: List<com.projectkaka.inventory.data.local.entity.FinancialCategoryEntity>,
+        val hiddenIds: Set<Int>
+    )
+
+    private val financeCombined = combine(
+        _triggerEmergencyAlert,
+        _overspendStrikeCount,
+        financeRepo.observeAllAccountBalances(),
+        financeRepo.getAllCategories(),
+        prefs.hiddenAccountIds
+    ) { alert, strikes, balances, cats, hiddenIds ->
+        DashboardFinanceData(alert, strikes, balances, cats, hiddenIds)
+    }
+
+    private val financeAndDocs = combine(
+        financeCombined,
+        documentRepo.observeActiveDocuments()
+    ) { fin, docs ->
+        Pair(fin, docs)
+    }
+
     val uiState: StateFlow<DashboardUiState> =
         combine(
             listState,
             dueTasks,
             combine(statsState, budgetState) { s, b -> Pair(s, b) },
             quickLogState,
-            combine(_triggerEmergencyAlert, _overspendStrikeCount, financeRepo.observeAllAccountBalances(), financeRepo.getAllCategories(), prefs.hiddenAccountIds) { alert, strikes, balances, cats, hiddenIds -> 
-                listOf(alert, strikes, balances, cats, hiddenIds) 
-            }
-        ) { list, due, statsAndBudget, ql, alertGroup ->
+            financeAndDocs
+        ) { list, due, statsAndBudget, ql, finDocs ->
             val stats = statsAndBudget.first
             val budget = statsAndBudget.second
-            val alert = alertGroup[0] as Boolean
-            val strikes = alertGroup[1] as Int
-            val balances = alertGroup[2] as List<com.projectkaka.inventory.data.local.entity.AccountEntity>
-            val cats = alertGroup[3] as List<com.projectkaka.inventory.data.local.entity.FinancialCategoryEntity>
-            val hiddenIds = alertGroup[4] as Set<Int>
-            val visibleBalances = balances.filter { it.id !in hiddenIds }
-            
+            val fin = finDocs.first
+            val docs = finDocs.second
+            val visibleBalances = fin.balances.filter { it.id !in fin.hiddenIds }
+
             DashboardUiState(
                 query = list.query,
                 items = list.items,
@@ -244,10 +266,11 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 qlDebitCat = ql.qlDebitCat,
                 qlCreditAcc = ql.qlCreditAcc,
                 qlCreditCat = ql.qlCreditCat,
-                triggerEmergencyAlert = alert,
-                overspendStrikeCount = strikes,
+                triggerEmergencyAlert = fin.alert,
+                overspendStrikeCount = fin.strikes,
                 accountBalances = visibleBalances,
-                categories = cats
+                categories = fin.cats,
+                documents = docs
             )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardUiState())
 

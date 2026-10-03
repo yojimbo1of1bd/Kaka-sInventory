@@ -6,6 +6,8 @@ import com.projectkaka.inventory.data.local.entity.AccountEntity
 import com.projectkaka.inventory.data.local.entity.AccountType
 import com.projectkaka.inventory.data.local.entity.CareTaskEntity
 import com.projectkaka.inventory.data.local.entity.CategoryType
+import com.projectkaka.inventory.data.local.entity.DocumentEntity
+import com.projectkaka.inventory.data.local.entity.DocumentPageEntity
 import com.projectkaka.inventory.data.local.entity.FinancialCategoryEntity
 import com.projectkaka.inventory.data.local.entity.ItemEntity
 import com.projectkaka.inventory.data.local.entity.ItemStatus
@@ -26,7 +28,8 @@ data class RestoreResult(
     val accountsRestored: Int,
     val categoriesRestored: Int,
     val transactionsRestored: Int,
-    val ledgerEntriesRestored: Int
+    val ledgerEntriesRestored: Int,
+    val documentsRestored: Int = 0
 )
 
 object ImportReader {
@@ -39,7 +42,9 @@ object ImportReader {
     suspend fun restoreKakaZip(context: Context, uri: Uri, db: AppDatabase): RestoreResult =
         withContext(Dispatchers.IO) {
             val imageDir = LocalImageStore.imageDir(context)
+            val docDir = DocumentImageStore.docDir(context)
             if (!imageDir.exists()) imageDir.mkdirs()
+            if (!docDir.exists()) docDir.mkdirs()
 
             var jsonData: String? = null
 
@@ -54,6 +59,13 @@ object ImportReader {
                             val fileName = File(entry.name).name
                             val destFile = File(imageDir, fileName)
                             // Overwrite or create image
+                            FileOutputStream(destFile).use { fos ->
+                                zis.copyTo(fos)
+                            }
+                        } else if (entry.name.startsWith("doc_images/") && !entry.isDirectory) {
+                            val fileName = File(entry.name).name
+                            val destFile = File(docDir, fileName)
+                            // Overwrite or create document page image
                             FileOutputStream(destFile).use { fos ->
                                 zis.copyTo(fos)
                             }
@@ -92,6 +104,7 @@ object ImportReader {
             var categoriesRestored = 0
             var transactionsRestored = 0
             var ledgerEntriesRestored = 0
+            var documentsRestored = 0
 
             db.withTransaction {
                 db.clearAllTables()
@@ -129,6 +142,58 @@ object ImportReader {
                             }
                         }
                         itemsRestored++
+                    }
+                }
+
+                // ── Document Vault Restore ──
+                val docsArr = root.optJSONArray("documents")
+                if (docsArr != null) {
+                    for (i in 0 until docsArr.length()) {
+                        val docObj = docsArr.getJSONObject(i)
+                        val id = docObj.optInt("id", 0)
+                        val coverImgName = docObj.optString("coverImageName", "")
+                        var coverPath = if (coverImgName.isNotBlank()) File(docDir, coverImgName).absolutePath else ""
+
+                        val docEntity = DocumentEntity(
+                            id = if (id > 0) id else 0,
+                            title = docObj.getString("title"),
+                            docType = docObj.optString("docType", "OTHER"),
+                            pageCount = docObj.optInt("pageCount", 1),
+                            coverImagePath = coverPath,
+                            notes = docObj.optString("notes", ""),
+                            issueDate = docObj.optLong("issueDate", System.currentTimeMillis()),
+                            expiryDate = if (docObj.isNull("expiryDate")) null else docObj.getLong("expiryDate"),
+                            linkedItemId = if (docObj.isNull("linkedItemId")) null else docObj.getInt("linkedItemId"),
+                            createdAt = docObj.optLong("createdAt", System.currentTimeMillis()),
+                            isArchived = docObj.optBoolean("isArchived", false)
+                        )
+                        val newDocId = db.documentDao().insertDocument(docEntity).toInt()
+
+                        val pagesArr = docObj.optJSONArray("pages")
+                        if (pagesArr != null) {
+                            for (p in 0 until pagesArr.length()) {
+                                val pObj = pagesArr.getJSONObject(p)
+                                val pId = pObj.optInt("id", 0)
+                                val pImgName = pObj.optString("imageName", "")
+                                val pImgPath = if (pImgName.isNotBlank()) File(docDir, pImgName).absolutePath else ""
+
+                                if (coverPath.isBlank() && pImgPath.isNotBlank()) {
+                                    coverPath = pImgPath
+                                    db.documentDao().updateDocument(docEntity.copy(id = newDocId, coverImagePath = coverPath))
+                                }
+
+                                val pageEntity = DocumentPageEntity(
+                                    id = if (pId > 0) pId else 0,
+                                    documentId = newDocId,
+                                    pageNumber = pObj.getInt("pageNumber"),
+                                    imagePath = pImgPath,
+                                    pageNote = pObj.optString("pageNote", ""),
+                                    createdAt = pObj.optLong("createdAt", System.currentTimeMillis())
+                                )
+                                db.documentDao().insertPage(pageEntity)
+                            }
+                        }
+                        documentsRestored++
                     }
                 }
 
@@ -272,7 +337,8 @@ object ImportReader {
                 accountsRestored = accountsRestored,
                 categoriesRestored = categoriesRestored,
                 transactionsRestored = transactionsRestored,
-                ledgerEntriesRestored = ledgerEntriesRestored
+                ledgerEntriesRestored = ledgerEntriesRestored,
+                documentsRestored = documentsRestored
             )
         }
 }

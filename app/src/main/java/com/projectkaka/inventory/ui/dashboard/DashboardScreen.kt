@@ -27,12 +27,18 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.filled.Settings
@@ -86,6 +92,7 @@ import com.projectkaka.inventory.ui.triage.MaintenanceDialog
 import com.projectkaka.inventory.ui.triage.ProfileIcon
 import com.projectkaka.inventory.ui.triage.TriageSheet
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DashboardScreen(
     useBottomNav: Boolean,
@@ -100,6 +107,8 @@ fun DashboardScreen(
     onOpenAlias: () -> Unit,
     onOpenLedger: () -> Unit,
     onOpenStatements: () -> Unit,
+    onOpenDocumentCapture: () -> Unit = {},
+    onOpenDocument: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: DashboardViewModel = viewModel()
 ) {
@@ -506,16 +515,33 @@ fun DashboardScreen(
             Spacer(Modifier.height(12.dp))
 
 
-            Button(
-                onClick = onOpenCapture,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                )
+            val haptic = LocalHapticFeedback.current
+            androidx.compose.material3.Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .combinedClickable(
+                        onClick = onOpenCapture,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onOpenDocumentCapture()
+                        }
+                    ),
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                shape = RoundedCornerShape(24.dp)
             ) {
-                Icon(Icons.Default.CameraAlt, contentDescription = null)
-                Text("  Rapid Capture", fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp, horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.CameraAlt, contentDescription = null)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Rapid Capture", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                }
             }
 
             Spacer(Modifier.height(14.dp))
@@ -604,19 +630,29 @@ fun DashboardScreen(
                 } // End item
 
                 when {
-                displayedItems.isEmpty() && state.isFiltering ->
-                    item { EmptyState("No items match this query.") }
+                    displayedItems.isEmpty() && state.documents.isEmpty() && selectedCategory == "Prescriptions & Slips" ->
+                        item { EmptyState("No prescriptions or slips cataloged yet. Long-press Rapid Capture to photograph document slips.") }
 
-                displayedItems.isEmpty() && selectedCategory == "Prescriptions & Slips" ->
-                    item { EmptyState("No prescriptions or slips cataloged yet. Tap Rapid Capture to photograph document slips.") }
+                    selectedCategory == "Prescriptions & Slips" && state.documents.isNotEmpty() -> {
+                        items(state.documents, key = { "doc_${it.id}" }) { doc ->
+                            DocumentDashboardCard(
+                                doc = doc,
+                                onClick = { onOpenDocument(doc.id) },
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                        }
+                    }
 
-                displayedItems.isEmpty() && selectedCategory != "All" ->
-                    item { EmptyState("No items found in category '$selectedCategory'.") }
+                    displayedItems.isEmpty() && state.isFiltering ->
+                        item { EmptyState("No items match this query.") }
 
-                displayedItems.isEmpty() ->
-                    item { EmptyState("No active items yet. Tap Rapid Capture to begin.") }
+                    displayedItems.isEmpty() && selectedCategory != "All" ->
+                        item { EmptyState("No items found in category '$selectedCategory'.") }
 
-                else -> {
+                    displayedItems.isEmpty() ->
+                        item { EmptyState("No active items yet. Tap Rapid Capture to begin.") }
+
+                    else -> {
                     if (isGridView) {
                         items(displayedItems.chunked(2)) { rowItems ->
                             Row(
@@ -754,3 +790,98 @@ private fun EmptyState(message: String) {
         )
     }
 }
+
+@Composable
+fun DocumentDashboardCard(
+    doc: com.projectkaka.inventory.data.local.entity.DocumentEntity,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(60.dp, 75.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center
+            ) {
+                if (doc.coverImagePath.isNotBlank() && java.io.File(doc.coverImagePath).exists()) {
+                    coil.compose.AsyncImage(
+                        model = java.io.File(doc.coverImagePath),
+                        contentDescription = doc.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.Description,
+                        contentDescription = null,
+                        tint = Color(0xFF58A6FF),
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF58A6FF).copy(alpha = 0.2f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = doc.docType.replace("_", " "),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF58A6FF)
+                        )
+                    }
+                    Text(
+                        text = "${doc.pageCount} page${if (doc.pageCount > 1) "s" else ""}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = doc.title,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                val dateStr = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.US).format(java.util.Date(doc.issueDate))
+                Text(
+                    text = "Issued: $dateStr",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (doc.notes.isNotBlank()) {
+                    Text(
+                        text = doc.notes,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+

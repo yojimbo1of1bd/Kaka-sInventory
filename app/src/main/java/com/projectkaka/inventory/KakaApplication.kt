@@ -37,4 +37,12 @@ class KakaApplication : Application() {
             ioDispatcher = Dispatchers.IO
         )
     }
+
+    val documentRepository: com.projectkaka.inventory.data.repository.DocumentRepository by lazy {
+        com.projectkaka.inventory.data.repository.DocumentRepositoryImpl(
+            db = database,
+            documentDao = database.documentDao(),
+            ioDispatcher = Dispatchers.IO
+        )
+    }
 }

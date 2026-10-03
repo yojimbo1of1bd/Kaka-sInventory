@@ -27,6 +27,7 @@ import com.projectkaka.inventory.ui.splash.SplashScreen
 import com.projectkaka.inventory.ui.theme.KakaTheme
 import com.projectkaka.inventory.ui.dashboard.GraphScreen
 import com.projectkaka.inventory.ui.liquidate.LedgerScreen
+import com.projectkaka.inventory.ui.documents.DocumentDetailScreen
 
 object Routes {
     const val SPLASH = "splash"
@@ -45,9 +46,12 @@ object Routes {
     const val BASKETS = "baskets"
     const val BASKET_DETAIL = "basket/{basketId}"
     const val BOX_SCANNER = "box_scanner"
+    const val DOCUMENT_CAPTURE = "document_capture"
+    const val DOCUMENT_DETAIL = "document/{documentId}"
 
     fun itemDetail(itemId: Int) = "item/$itemId"
     fun basketDetail(basketId: Int) = "basket/$basketId"
+    fun documentDetail(documentId: Int) = "document/$documentId"
 }
 
 @Composable
@@ -109,12 +113,28 @@ fun KakaApp() {
                     onOpenGraph = { navController.navigate(Routes.GRAPH) },
                     onOpenAlias = { navController.navigate(Routes.ALIAS) },
                     onOpenLedger = { navController.navigate(Routes.LEDGER) },
-                    onOpenStatements = { navController.navigate(Routes.STATEMENTS) }
+                    onOpenStatements = { navController.navigate(Routes.STATEMENTS) },
+                    onOpenDocumentCapture = { navController.navigate(Routes.DOCUMENT_CAPTURE) },
+                    onOpenDocument = { docId -> navController.navigate(Routes.documentDetail(docId)) }
                 )
             }
 
             composable(Routes.CAPTURE) {
                 CaptureScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable(Routes.DOCUMENT_CAPTURE) {
+                CaptureScreen(
+                    isInitialDocumentMode = true,
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(
+                route = Routes.DOCUMENT_DETAIL,
+                arguments = listOf(navArgument("documentId") { type = NavType.IntType })
+            ) {
+                DocumentDetailScreen(onBack = { navController.popBackStack() })
             }
 
             composable(Routes.DRAFTS) {
