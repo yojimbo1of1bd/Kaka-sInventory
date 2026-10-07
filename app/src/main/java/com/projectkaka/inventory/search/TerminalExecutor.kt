@@ -5,12 +5,17 @@ import com.projectkaka.inventory.data.repository.FinanceRepository
 import com.projectkaka.inventory.model.Money
 
 class TerminalExecutor(
-    private val financeRepo: FinanceRepository
+    private val financeRepo: FinanceRepository,
+    private val context: android.content.Context? = null,
+    private val preferences: com.projectkaka.inventory.data.settings.UserPreferences? = null
 ) {
     private var pendingDestructiveCommand: TerminalCommand.Delete? = null
 
     suspend fun execute(input: String): TerminalResult {
         val trimmed = input.trim()
+        if (trimmed.isNotBlank()) {
+            preferences?.addCommandToHistory(trimmed)
+        }
         
         // Handle pending confirmation
         val pending = pendingDestructiveCommand
@@ -25,7 +30,11 @@ class TerminalExecutor(
         }
         
         val command = TerminalParser.parse(trimmed)
-        return executeCommand(command)
+        return try {
+            executeCommand(command)
+        } catch (e: Exception) {
+            TerminalResult.Failure(e.message ?: "Command execution failed.")
+        }
     }
 
     suspend fun executeCommand(command: TerminalCommand): TerminalResult {
@@ -33,61 +42,48 @@ class TerminalExecutor(
             is TerminalCommand.Empty -> TerminalResult.Pending
             is TerminalCommand.Error -> TerminalResult.Failure(command.message)
             is TerminalCommand.Help -> TerminalResult.Success(
-                "Available commands:\n" +
-                "f/ ±amount <account> <category> [note]\n" +
-                "init/ <account> <amount>\n" +
-                "delete/ <account|tx> <name|id>\n" +
-                "kaka show graph|ledger|alias|export"
+                "Available commands (Quick Reference):\n" +
+                "  f/ [±]amount <debit_acc> <credit_acc> [\"notes\"] [@date]\n" +
+                "  init/ <account> <amount>\n" +
+                "  xfer/ <amount> <from> <to> [note]\n" +
+                "  cashout/ <amount> <source> [target]\n" +
+                "  charge/ <account> <rate> (e.g. *1.85%)\n" +
+                "  due/ <in|out> <amount> <contact> [note]\n" +
+                "  settle/ <contact> [amount] [account]\n" +
+                "  log/ <month|today|YYYY-MM-DD [window]|all>\n" +
+                "  snapshot/ <create|verify>\n" +
+                "  verify/ images\n" +
+                "  history/ [count]\n" +
+                "  account/ <add|hide|show|archive|restore>\n" +
+                "  alter/ <account> <rename|type> <value>\n" +
+                "  bal/ <account|all>\n" +
+                "  report/ <bs|pnl|trend>\n" +
+                "  help/ ?  or  man ? (Debits & Credits Accounting Handbook)\n" +
+                "  man <cmd> (e.g. man f/, man log/, man settle/, man snapshot/)\n" +
+                "  kaka show alias|graph|ledger|export\n\n" +
+                "💡 Tip: Tap '📖 Terminal Manual' button above or type 'kaka show alias' to view the full interactive reference and debits/credits guide."
             )
             is TerminalCommand.KakaAction -> TerminalResult.PendingAction(command.action, command.arg)
-            is TerminalCommand.Financial -> {
-                val accountName = command.tokens.getOrNull(0) ?: "Cash"
-                val categoryName = command.tokens.getOrNull(1) ?: if (command.isCredit) "Uncategorized Income" else "Uncategorized Expense"
-                val note = command.tokens.drop(2).joinToString(" ")
-                
-                val accounts = financeRepo.resolveAccountsExact(accountName)
-                if (accounts.isEmpty()) return TerminalResult.Failure("Unknown account '$accountName'.")
-                if (accounts.size > 1) return TerminalResult.NeedsInput("Ambiguous account '$accountName'. Options:", accounts.map { it.name })
-                val account = accounts.first()
-
-                val categories = financeRepo.resolveCategoriesExact(categoryName)
-                var categoryId: Int? = null
-                var counterAccountId: Int? = null
-                var targetName = ""
-                
-                if (categories.isNotEmpty()) {
-                    if (categories.size > 1) return TerminalResult.NeedsInput("Ambiguous category '$categoryName'. Options:", categories.map { it.name })
-                    val category = categories.first()
-                    categoryId = category.id
-                    targetName = category.name
-                } else {
-                    val fallbackAccounts = financeRepo.resolveAccountsExact(categoryName)
-                    if (fallbackAccounts.isEmpty()) return TerminalResult.Failure("Unknown category or account '$categoryName'.")
-                    if (fallbackAccounts.size > 1) return TerminalResult.NeedsInput("Ambiguous account '$categoryName'. Options:", fallbackAccounts.map { it.name })
-                    val counterAccount = fallbackAccounts.first()
-                    counterAccountId = counterAccount.id
-                    targetName = counterAccount.name
-                }
-
-                val transaction = TransactionEntity(
-                    accountId = account.id,
-                    categoryId = categoryId,
-                    counterAccountId = counterAccountId,
-                    amount = command.amount,
-                    isCredit = command.isCredit,
-                    note = note,
-                    timestamp = System.currentTimeMillis() // Assuming no date token parsing for now
-                )
-                financeRepo.recordTransaction(transaction)
-                TerminalResult.Success("Success: ${if (command.isCredit) "+" else "-"}৳${command.amount} ${account.name} -> $targetName", null)
-            }
+            is TerminalCommand.Charge -> executeCharge(command)
+            is TerminalCommand.Cashout -> executeCashout(command)
+            is TerminalCommand.Verify -> executeVerify(command)
+            is TerminalCommand.Snapshot -> executeSnapshot(command)
+            is TerminalCommand.Man -> executeMan(command)
+            is TerminalCommand.Log -> executeLog(command)
+            is TerminalCommand.History -> executeHistory(command)
+            is TerminalCommand.Financial -> executeFinancial(command)
             is TerminalCommand.Init -> {
                 val accounts = financeRepo.resolveAccountsExact(command.accountToken)
-                if (accounts.isEmpty()) return TerminalResult.Failure("Unknown account '${command.accountToken}'.")
                 if (accounts.size > 1) return TerminalResult.NeedsInput("Ambiguous account '${command.accountToken}'. Options:", accounts.map { it.name })
                 
-                financeRepo.initializeAccountBalance(accounts.first().name, command.amount)
-                TerminalResult.Success("Initialized ${accounts.first().name} to ${command.amount.format()}")
+                if (accounts.isEmpty()) {
+                    financeRepo.initializeAccountBalance(command.accountToken, command.amount)
+                    val formatted = command.accountToken.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }
+                    TerminalResult.Success("Created account '$formatted' and initialized balance to ${command.amount.format()}")
+                } else {
+                    financeRepo.initializeAccountBalance(accounts.first().name, command.amount)
+                    TerminalResult.Success("Initialized ${accounts.first().name} to ${command.amount.format()}")
+                }
             }
             is TerminalCommand.Delete -> {
                 pendingDestructiveCommand = command
@@ -127,30 +123,631 @@ class TerminalExecutor(
         if (fromAccounts.isEmpty()) return TerminalResult.Failure("Unknown from account: ${command.fromToken}")
         if (fromAccounts.size > 1) return TerminalResult.NeedsInput("Ambiguous from account: ${command.fromToken}", fromAccounts.map { it.name })
         
-        val toAccounts = financeRepo.resolveAccountsExact(command.toToken)
+        // Multi-word greedy match for to-account
+        var toAccounts = financeRepo.resolveAccountsExact(command.toToken)
+        var note = command.noteTokens.joinToString(" ")
+        if (toAccounts.isEmpty() && command.noteTokens.isNotEmpty()) {
+            val candidateTo = "${command.toToken} ${command.noteTokens.first()}"
+            val candidateAccounts = financeRepo.resolveAccountsExact(candidateTo)
+            if (candidateAccounts.isNotEmpty()) {
+                toAccounts = candidateAccounts
+                note = command.noteTokens.drop(1).joinToString(" ")
+            }
+        }
         if (toAccounts.isEmpty()) return TerminalResult.Failure("Unknown to account: ${command.toToken}")
         if (toAccounts.size > 1) return TerminalResult.NeedsInput("Ambiguous to account: ${command.toToken}", toAccounts.map { it.name })
         
         val fromAcc = fromAccounts.first()
         val toAcc = toAccounts.first()
         
-        financeRepo.transfer(fromAcc.id, toAcc.id, command.amount, command.noteTokens.joinToString(" "), System.currentTimeMillis())
+        financeRepo.transfer(fromAcc.id, toAcc.id, command.amount, note, System.currentTimeMillis())
         return TerminalResult.Success("Transferred ${command.amount.format()} from ${fromAcc.name} to ${toAcc.name}")
     }
 
+    private suspend fun executeCharge(command: TerminalCommand.Charge): TerminalResult {
+        return when (command.action) {
+            "all" -> {
+                val all = preferences?.getAllAccountChargeRates() ?: emptyMap()
+                if (all.isEmpty()) return TerminalResult.Success("No account cashout charges configured.\nSet one with: charge/ <account> <rate> (e.g. charge/ bkash *1.85%)")
+                val lines = all.entries.joinToString("\n") { (acc, rate) ->
+                    "  • ${acc.replaceFirstChar { it.uppercase() }}: ${"%.2f".format(rate * 100)}%"
+                }
+                TerminalResult.Success("Configured Cashout Charges:\n$lines")
+            }
+            "get" -> {
+                val acc = command.accountToken ?: return TerminalResult.Failure("Account name required.")
+                val rate = preferences?.getAccountChargeRate(acc)
+                if (rate == null) {
+                    TerminalResult.Failure("No cashout charge configured for '$acc'.", hint = "Set rate with: charge/ $acc *1.85%")
+                } else {
+                    TerminalResult.Success("$acc cashout charge: ${"%.2f".format(rate * 100)}%")
+                }
+            }
+            "clear" -> {
+                val acc = command.accountToken ?: return TerminalResult.Failure("Account name required.")
+                preferences?.removeAccountChargeRate(acc)
+                TerminalResult.Success("Cleared cashout charge for '$acc'.")
+            }
+            "set" -> {
+                val acc = command.accountToken ?: return TerminalResult.Failure("Account name required.")
+                val rateStr = command.rateToken ?: return TerminalResult.Failure("Charge rate required (e.g. *1.85% or 1.85%).")
+                val cleaned = rateStr.removePrefix("*").removeSuffix("%").trim()
+                val parsed = cleaned.toDoubleOrNull() ?: return TerminalResult.Failure("Invalid rate '$rateStr'. Use format like: *1.85% or 1.5%")
+                val decimalRate = if (parsed >= 0.20) parsed / 100.0 else parsed
+                preferences?.setAccountChargeRate(acc, decimalRate)
+                TerminalResult.Success("Set cashout charge for '$acc' to ${"%.2f".format(decimalRate * 100)}%")
+            }
+            else -> TerminalResult.Failure("Unknown charge action: ${command.action}")
+        }
+    }
+
+    private suspend fun executeCashout(command: TerminalCommand.Cashout): TerminalResult {
+        val sourceAccounts = financeRepo.resolveAccountsExact(command.sourceToken)
+        if (sourceAccounts.isEmpty()) return TerminalResult.Failure("Unknown source account: '${command.sourceToken}'")
+        if (sourceAccounts.size > 1) return TerminalResult.NeedsInput("Ambiguous source account: '${command.sourceToken}'", sourceAccounts.map { it.name })
+        val sourceAcc = sourceAccounts.first()
+
+        val targetAccounts = financeRepo.resolveAccountsExact(command.targetToken)
+        if (targetAccounts.isEmpty()) return TerminalResult.Failure("Unknown target account: '${command.targetToken}'")
+        if (targetAccounts.size > 1) return TerminalResult.NeedsInput("Ambiguous target account: '${command.targetToken}'", targetAccounts.map { it.name })
+        val targetAcc = targetAccounts.first()
+
+        val rate = preferences?.getAccountChargeRate(sourceAcc.name)
+            ?: preferences?.getAccountChargeRate(command.sourceToken)
+
+        if (rate == null) {
+            return TerminalResult.Failure(
+                "No cashout charge configured for '${sourceAcc.name}'.",
+                hint = "Set charge first: charge/ ${sourceAcc.name.lowercase()} *1.85%"
+            )
+        }
+
+        val feeMinor = Math.round(command.amount.minorUnits * rate)
+        val feeMoney = Money(feeMinor)
+
+        // 1. Transfer principal to Cash
+        financeRepo.transfer(sourceAcc.id, targetAcc.id, command.amount, "Cash out principal", System.currentTimeMillis())
+
+        // 2. Record fee if > 0 against Capital (so it does not pollute the operating expense Net Income Statement)
+        if (feeMinor > 0) {
+            val capitalAcc = financeRepo.getAllAccountsSnapshot().find { it.name.equals("Capital", ignoreCase = true) }
+                ?: financeRepo.getAllAccountsSnapshot().firstOrNull { it.type == com.projectkaka.inventory.data.local.entity.AccountType.CAPITAL }
+                ?: run {
+                    val newAcc = com.projectkaka.inventory.data.local.entity.AccountEntity(name = "Capital", type = com.projectkaka.inventory.data.local.entity.AccountType.CAPITAL, openingBalance = Money.ZERO)
+                    val id = financeRepo.insertAccount(newAcc)
+                    newAcc.copy(id = id.toInt())
+                }
+            val feeTx = TransactionEntity(
+                accountId = sourceAcc.id,
+                categoryId = null,
+                counterAccountId = capitalAcc.id,
+                amount = feeMoney,
+                isCredit = false,
+                type = com.projectkaka.inventory.data.local.entity.TransactionType.TRANSFER,
+                note = "${sourceAcc.name} cash out charge (${"%.2f".format(rate * 100)}%)",
+                timestamp = System.currentTimeMillis()
+            )
+            financeRepo.recordTransaction(feeTx)
+        }
+
+        val totalDeducted = Money(command.amount.minorUnits + feeMinor)
+        return TerminalResult.Success(
+            "Cashed out ${command.amount.format()} from ${sourceAcc.name} to ${targetAcc.name}. Charge: ${feeMoney.format()} (${"%.2f".format(rate * 100)}%). Total deducted from ${sourceAcc.name}: ${totalDeducted.format()}."
+        )
+    }
+
     private suspend fun executeLedgerDue(command: TerminalCommand.LedgerDue): TerminalResult {
-        return TerminalResult.Failure("Ledger not fully implemented yet.")
+        val existingContacts = financeRepo.getDistinctContactNames()
+        val tokens = command.contactToken.split(" ").filter { it.isNotBlank() }
+        
+        var matchedContact: String? = null
+        var note = command.note
+        
+        for (len in tokens.size downTo 1) {
+            val candidate = tokens.take(len).joinToString(" ")
+            val exact = existingContacts.find { it.equals(candidate, ignoreCase = true) }
+            if (exact != null) {
+                matchedContact = exact
+                if (note.isBlank()) {
+                    note = tokens.drop(len).joinToString(" ")
+                }
+                break
+            }
+        }
+        
+        val resolvedContact = matchedContact ?: run {
+            if (tokens.size <= 2) {
+                tokens.joinToString(" ")
+            } else {
+                if (note.isBlank()) {
+                    note = tokens.drop(2).joinToString(" ")
+                }
+                tokens.take(2).joinToString(" ")
+            }
+        }
+        
+        if (resolvedContact.isBlank()) {
+            return TerminalResult.Failure("Contact name required for ledger due.")
+        }
+        
+        val defaultAccount = financeRepo.resolveAccount("Cash") 
+            ?: financeRepo.getActiveAccountsSnapshot().firstOrNull()
+            ?: return TerminalResult.Failure("No active cash account found to anchor liability.")
+        
+        val type = if (command.isOut) com.projectkaka.inventory.data.local.entity.LedgerType.PAYABLE else com.projectkaka.inventory.data.local.entity.LedgerType.RECEIVABLE
+        val entry = com.projectkaka.inventory.data.local.entity.LedgerEntryEntity(
+            contactName = resolvedContact,
+            amount = command.amount,
+            type = type,
+            note = note,
+            dueDate = null
+        )
+        financeRepo.issueDebt(entry, defaultAccount.id, note.ifBlank { "Due for $resolvedContact" })
+        return TerminalResult.Success("Recorded ${if (command.isOut) "payable (I owe)" else "receivable (owes me)"}: ${command.amount.format()} to '$resolvedContact'${if (note.isNotBlank()) " ($note)" else ""}")
+    }
+    
+    private suspend fun executeFinancial(command: TerminalCommand.Financial): TerminalResult {
+        val debitAcc = resolveOrCreateAccount(command.debitToken, isDebitSide = true)
+            ?: return TerminalResult.Failure("Could not resolve or create debit account: '${command.debitToken}'")
+        val creditAcc = resolveOrCreateAccount(command.creditToken, isDebitSide = false)
+            ?: return TerminalResult.Failure("Could not resolve or create credit account: '${command.creditToken}'")
+
+        val txTime = if (command.dateToken != null) {
+            parseDateTokenToEpoch(command.dateToken) ?: System.currentTimeMillis()
+        } else {
+            System.currentTimeMillis()
+        }
+
+        val entry = com.projectkaka.inventory.data.local.entity.JournalEntryEntity(
+            timestamp = txTime,
+            description = command.note.ifBlank { "${debitAcc.name} / ${creditAcc.name}" },
+            status = com.projectkaka.inventory.data.local.entity.JournalStatus.POSTED,
+            approvalStatus = com.projectkaka.inventory.data.local.entity.ApprovalStatus.APPROVED
+        )
+
+        val postings = listOf(
+            com.projectkaka.inventory.data.local.entity.PostingEntity(
+                journalEntryId = 0,
+                accountId = debitAcc.id,
+                amount = command.amount,
+                isCredit = false, // DEBIT
+                note = command.note
+            ),
+            com.projectkaka.inventory.data.local.entity.PostingEntity(
+                journalEntryId = 0,
+                accountId = creditAcc.id,
+                amount = command.amount,
+                isCredit = true, // CREDIT
+                note = command.note
+            )
+        )
+
+        financeRepo.recordSplitTransaction(entry, postings)
+
+        val noteStr = if (command.note.isNotBlank()) " | \"${command.note}\"" else ""
+        return TerminalResult.Success(
+            "✓ [DR: ${debitAcc.name} ${command.amount.format()}] ➔ [CR: ${creditAcc.name} ${command.amount.format()}]$noteStr"
+        )
+    }
+
+    private suspend fun resolveOrCreateAccount(token: String, isDebitSide: Boolean): com.projectkaka.inventory.data.local.entity.AccountEntity? {
+        val lower = token.lowercase().trim()
+        val allAccounts = financeRepo.getAllAccountsSnapshot()
+
+        // Generic expenses
+        if (lower in setOf("exp", "expense", "expenses", "cost", "khoroch")) {
+            return allAccounts.find { it.name.equals("Expenses", ignoreCase = true) }
+                ?: allAccounts.find { it.name.equals("Operating Expenses", ignoreCase = true) }
+                ?: run {
+                    val newAcc = com.projectkaka.inventory.data.local.entity.AccountEntity(
+                        name = "Expenses",
+                        type = com.projectkaka.inventory.data.local.entity.AccountType.EXPENSE,
+                        openingBalance = Money.ZERO
+                    )
+                    val id = financeRepo.insertAccount(newAcc)
+                    newAcc.copy(id = id.toInt())
+                }
+        }
+
+        // Generic income
+        if (lower in setOf("inc", "income", "revenue", "aay")) {
+            return allAccounts.find { it.name.equals("Income", ignoreCase = true) }
+                ?: allAccounts.firstOrNull { it.type == com.projectkaka.inventory.data.local.entity.AccountType.REVENUE }
+                ?: run {
+                    val newAcc = com.projectkaka.inventory.data.local.entity.AccountEntity(
+                        name = "Income",
+                        type = com.projectkaka.inventory.data.local.entity.AccountType.REVENUE,
+                        openingBalance = Money.ZERO
+                    )
+                    val id = financeRepo.insertAccount(newAcc)
+                    newAcc.copy(id = id.toInt())
+                }
+        }
+
+        // Match existing accounts by exact name or alias
+        val matched = financeRepo.resolveAccountsExact(token)
+        if (matched.isNotEmpty()) return matched.first()
+
+        val found = allAccounts.find { it.name.equals(token, ignoreCase = true) }
+        if (found != null) return found
+
+        // Create new account with sensible type default
+        val type = when {
+            lower in setOf("salary", "gift", "allowance", "bonus", "dividend", "interest") -> com.projectkaka.inventory.data.local.entity.AccountType.REVENUE
+            lower in setOf("lunch", "food", "dinner", "breakfast", "grocery", "bill", "rent", "utility", "fare", "transport") -> com.projectkaka.inventory.data.local.entity.AccountType.EXPENSE
+            lower in setOf("bkash", "bikash", "nagad", "rocket", "upay", "cellfin", "cash", "bank", "wallet") -> com.projectkaka.inventory.data.local.entity.AccountType.CASH
+            !isDebitSide -> com.projectkaka.inventory.data.local.entity.AccountType.REVENUE
+            else -> com.projectkaka.inventory.data.local.entity.AccountType.EXPENSE
+        }
+
+        val formattedName = token.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }
+        val newAcc = com.projectkaka.inventory.data.local.entity.AccountEntity(
+            name = formattedName,
+            type = type,
+            openingBalance = Money.ZERO
+        )
+        val id = financeRepo.insertAccount(newAcc)
+        return newAcc.copy(id = id.toInt())
+    }
+
+    private fun parseDateTokenToEpoch(dateToken: String): Long? {
+        return try {
+            val date = java.time.LocalDate.parse(dateToken.trim())
+            date.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun executeMan(command: TerminalCommand.Man): TerminalResult {
+        val content = TerminalManPages.getManPage(command.topic)
+        return TerminalResult.Success(content)
+    }
+
+    private suspend fun executeLog(command: TerminalCommand.Log): TerminalResult {
+        val zone = java.time.ZoneId.systemDefault()
+        val now = java.time.LocalDate.now()
+        val filter = command.rawFilter.trim().lowercase()
+
+        val (startMs, endMs, label) = when {
+            filter.isEmpty() -> {
+                val start = now.withDayOfMonth(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = now.withDayOfMonth(now.lengthOfMonth()).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Triple(start, end, "Current Month (${now.format(java.time.format.DateTimeFormatter.ofPattern("MMM yyyy"))})")
+            }
+            filter == "today" -> {
+                val start = now.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = now.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Triple(start, end, "Today (${now.format(java.time.format.DateTimeFormatter.ofPattern("MMM dd, yyyy"))})")
+            }
+            filter == "all" -> {
+                Triple(0L, Long.MAX_VALUE, "All Time")
+            }
+            java.time.Month.entries.any { it.name.lowercase().startsWith(filter) || filter.startsWith(it.name.lowercase().take(3)) } -> {
+                val month = java.time.Month.entries.first { it.name.lowercase().startsWith(filter) || filter.startsWith(it.name.lowercase().take(3)) }
+                val year = now.year
+                val start = java.time.LocalDate.of(year, month, 1).atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = java.time.LocalDate.of(year, month, month.length(java.time.Year.isLeap(year.toLong()))).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Triple(start, end, "${month.name.lowercase().replaceFirstChar { it.uppercase() }} $year")
+            }
+            filter.matches(Regex("""^\d{4}-\d{2}-\d{2}(?:\s+\d{1,2}:\d{2}-\d{1,2}:\d{2})?$""")) -> {
+                val parts = filter.split(" ")
+                val datePart = java.time.LocalDate.parse(parts[0])
+                if (parts.size > 1) {
+                    val timeParts = parts[1].split("-")
+                    val t1 = java.time.LocalTime.parse(timeParts[0])
+                    val t2 = java.time.LocalTime.parse(timeParts[1])
+                    val start = datePart.atTime(t1).atZone(zone).toInstant().toEpochMilli()
+                    val end = datePart.atTime(t2).atZone(zone).toInstant().toEpochMilli()
+                    Triple(start, end, filter)
+                } else {
+                    val start = datePart.atStartOfDay(zone).toInstant().toEpochMilli()
+                    val end = datePart.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                    Triple(start, end, "$datePart")
+                }
+            }
+            filter.matches(Regex("""^\d{1,2}:\d{2}-\d{1,2}:\d{2}$""")) -> {
+                val timeParts = filter.split("-")
+                val t1 = java.time.LocalTime.parse(timeParts[0])
+                val t2 = java.time.LocalTime.parse(timeParts[1])
+                val start = now.atTime(t1).atZone(zone).toInstant().toEpochMilli()
+                val end = now.atTime(t2).atZone(zone).toInstant().toEpochMilli()
+                Triple(start, end, "Today ($filter)")
+            }
+            else -> {
+                return TerminalResult.Failure("Invalid log filter: '${command.rawFilter}'. Use a month (e.g. august), date (e.g. 2026-10-07), time range (e.g. 10:00-18:00), 'today', or 'all'.")
+            }
+        }
+
+        val allTxs = financeRepo.getTransactionsInRangeSnapshot(startMs, endMs)
+        val allAccounts = financeRepo.getAllAccountsSnapshot().associateBy { it.id }
+
+        if (allTxs.isEmpty()) {
+            return TerminalResult.Success("No financial trade-offs recorded for: $label.")
+        }
+
+        val grouped = allTxs.groupBy { it.transferId ?: "single_${it.id}" }
+        val dateFmt = java.time.format.DateTimeFormatter.ofPattern("MMM dd, HH:mm")
+
+        var totalVolumeMinor = 0L
+        val lines = mutableListOf<String>()
+        lines.add("=== FINANCIAL TRADEOFF AUDIT LOG: $label ===")
+
+        for ((_, postings) in grouped) {
+            val primary = postings.first()
+            val timeStr = java.time.Instant.ofEpochMilli(primary.timestamp).atZone(zone).format(dateFmt)
+
+            val debitPosting = postings.find { !it.isCredit }
+            val creditPosting = postings.find { it.isCredit }
+
+            val debitAccName = debitPosting?.let { allAccounts[it.accountId]?.name } ?: "Assets"
+            val creditAccName = creditPosting?.let { allAccounts[it.accountId]?.name } ?: "Expenses"
+            val amt = primary.amount
+
+            totalVolumeMinor += amt.minorUnits
+            val note = primary.note.ifBlank { "Trade-off" }
+
+            lines.add("[$timeStr] ${primary.type}: ${amt.format()}")
+            lines.add("  Tradeoff: \"$note\"")
+            lines.add("  Flow: [DR: $debitAccName] ➔ [CR: $creditAccName]")
+        }
+
+        lines.add("--------------------------------------------------")
+        lines.add("Total Entries: ${grouped.size} | Volume: ${Money(totalVolumeMinor).format()}")
+
+        return TerminalResult.Success(lines.joinToString("\n"))
+    }
+
+    private suspend fun executeSnapshot(command: TerminalCommand.Snapshot): TerminalResult {
+        val ctx = context ?: return TerminalResult.Failure("Context unavailable for snapshot.")
+        return when (command.action.lowercase()) {
+            "create", "take", "make" -> {
+                val manifest = com.projectkaka.inventory.util.ImageIntegrityManager.createBaselineSnapshot(ctx)
+                val lines = mutableListOf<String>()
+                lines.add("Cryptographic Baseline Snapshot Created")
+                lines.add("• Date: ${manifest.formattedDate}")
+                lines.add("• Files: ${manifest.totalFiles} (${manifest.formatTotalSize()})")
+                lines.add("• Storage: snapshot_baseline.json & .sha256 sidecars")
+                if (manifest.entries.isNotEmpty()) {
+                    lines.add("\nFingerprints:")
+                    manifest.entries.take(8).forEachIndexed { idx, entry ->
+                        lines.add("  ${idx + 1}. ${entry.fileName} (${entry.formatSize()}) -> sha256: ${entry.sha256.take(12)}...${entry.sha256.takeLast(6)}")
+                    }
+                    if (manifest.entries.size > 8) {
+                        lines.add("  ... and ${manifest.entries.size - 8} more file(s).")
+                    }
+                }
+                TerminalResult.Success(lines.joinToString("\n"))
+            }
+            "verify", "check", "audit" -> {
+                if (!com.projectkaka.inventory.util.ImageIntegrityManager.hasBaseline(ctx)) {
+                    return TerminalResult.Failure("No cryptographic baseline snapshot found. Run 'snapshot/ create' first to establish a baseline.")
+                }
+                val res = com.projectkaka.inventory.util.ImageIntegrityManager.verifyAllImages(ctx)
+                if (res.alteredFiles.isEmpty() && res.missingFiles.isEmpty() && res.untrackedFiles.isEmpty()) {
+                    val lines = mutableListOf<String>()
+                    lines.add("Cryptographic Audit Passed (Baseline: ${res.baselineDate ?: "Active"})")
+                    lines.add("• Verified: ${res.intactCount} / ${res.totalScanned} file(s) (${res.formatTotalSize()})")
+                    lines.add("• Alterations: 0 | Missing: 0 | Untracked: 0")
+                    if (res.intactFiles.isNotEmpty()) {
+                        lines.add("\nVerified Files:")
+                        res.intactFiles.take(8).forEach { f ->
+                            lines.add("  • ${f.fileName} (${f.formatSize()}) | sha256: ${f.sha256.take(12)}... [INTACT]")
+                        }
+                        if (res.intactFiles.size > 8) {
+                            lines.add("  ... and ${res.intactFiles.size - 8} more file(s).")
+                        }
+                    }
+                    TerminalResult.Success(lines.joinToString("\n"))
+                } else {
+                    val lines = mutableListOf<String>()
+                    lines.add("Integrity Alert Detected!")
+                    lines.add("• Scanned: ${res.totalScanned} | Intact: ${res.intactCount} | Altered: ${res.alteredFiles.size} | Missing: ${res.missingFiles.size} | Untracked: ${res.untrackedFiles.size}")
+                    if (res.alteredFiles.isNotEmpty()) {
+                        lines.add("\nAltered/Corrupted Files:")
+                        res.alteredFiles.forEach { f ->
+                            lines.add("  • ${f.fileName}: HASH MISMATCH! Expected ${f.expectedHash.take(10)}..., Found ${f.actualHash.take(10)}...")
+                        }
+                    }
+                    if (res.missingFiles.isNotEmpty()) {
+                        lines.add("\nMissing Files (Deleted from disk):")
+                        res.missingFiles.forEach { lines.add("  • $it") }
+                    }
+                    if (res.untrackedFiles.isNotEmpty()) {
+                        lines.add("\nUntracked Files (Not in baseline snapshot):")
+                        res.untrackedFiles.forEach { lines.add("  • $it") }
+                    }
+                    TerminalResult.Failure(lines.joinToString("\n"))
+                }
+            }
+            else -> TerminalResult.Failure("Unknown snapshot action: '${command.action}'. Use 'snapshot/ create' or 'snapshot/ verify'.")
+        }
     }
     
     private suspend fun executeLedgerSettle(command: TerminalCommand.LedgerSettle): TerminalResult {
-        return TerminalResult.Failure("Ledger not fully implemented yet.")
+        val existingContacts = financeRepo.getDistinctContactNames()
+        val exactMatch = existingContacts.find { it.equals(command.contactToken, ignoreCase = true) }
+        val resolvedContact = exactMatch ?: existingContacts.find { it.contains(command.contactToken, ignoreCase = true) } ?: command.contactToken.trim()
+        
+        val openEntries = financeRepo.getUnsettledEntriesForContact(resolvedContact)
+        if (openEntries.isEmpty()) {
+            return TerminalResult.Failure("No open ledger entries found for '$resolvedContact'.")
+        }
+        
+        val accounts = financeRepo.resolveAccountsExact(command.accountToken)
+        val settleAcc = accounts.firstOrNull() 
+            ?: financeRepo.resolveAccount("Cash") 
+            ?: financeRepo.getActiveAccountsSnapshot().firstOrNull()
+            ?: return TerminalResult.Failure("No account available for settlement.")
+
+        val totalOpenMinor = openEntries.sumOf { it.amount.minorUnits }
+        val totalOpenMoney = Money(totalOpenMinor)
+
+        // Case 1: No amount specified -> Settle ALL open entries for contact in FIFO order
+        if (command.amount == null) {
+            for (entry in openEntries) {
+                financeRepo.settleDebt(entry.id, settleAcc.id, "Settled all with $resolvedContact")
+            }
+            return TerminalResult.Success(
+                "✓ Fully settled all ${openEntries.size} open liabilities totaling ${totalOpenMoney.format()} for '$resolvedContact' using ${settleAcc.name}."
+            )
+        }
+
+        // Case 2: Amount specified -> Apply FIFO across open entries
+        var remainingPayment = command.amount.minorUnits
+        var settledCount = 0
+        var totalSettledMinor = 0L
+        var partialSettledInfo: String? = null
+
+        for (entry in openEntries) {
+            if (remainingPayment <= 0L) break
+
+            if (remainingPayment >= entry.amount.minorUnits) {
+                financeRepo.settleDebt(entry.id, settleAcc.id, "Settled debt with $resolvedContact")
+                remainingPayment -= entry.amount.minorUnits
+                totalSettledMinor += entry.amount.minorUnits
+                settledCount++
+            } else {
+                // Partial settlement of this entry
+                val paidPart = Money(remainingPayment)
+                financeRepo.settleDebtPartial(entry.id, settleAcc.id, paidPart, "Partially settled debt with $resolvedContact")
+                totalSettledMinor += remainingPayment
+                partialSettledInfo = "Partially settled ${paidPart.format()} on entry of ${entry.amount.format()} (Remainder: ${Money(entry.amount.minorUnits - remainingPayment).format()})"
+                remainingPayment = 0L
+                settledCount++
+                break
+            }
+        }
+
+        val totalSettledMoney = Money(totalSettledMinor)
+        val remainingDebt = totalOpenMoney - totalSettledMoney
+
+        val changeMsg = if (remainingPayment > 0L) {
+            val changeMoney = Money(remainingPayment)
+            " All debts cleared! Change returned: ${changeMoney.format()}."
+        } else ""
+
+        val remainingMsg = if (remainingDebt.minorUnits > 0L) {
+            " Remaining open balance: ${remainingDebt.format()}."
+        } else ""
+
+        val partialMsg = if (partialSettledInfo != null) "\n  • $partialSettledInfo" else ""
+
+        return TerminalResult.Success(
+            "✓ Settled ${totalSettledMoney.format()} across $settledCount entry/entries for '$resolvedContact' using ${settleAcc.name}.$changeMsg$remainingMsg$partialMsg"
+        )
+    }
+
+    private suspend fun executeVerify(command: TerminalCommand.Verify): TerminalResult {
+        val ctx = context ?: return TerminalResult.Failure("Context unavailable for image verification.")
+        val target = command.target.trim()
+
+        // 1. Check if target is a specific Item ID (e.g. "3" or "item 3" or "#3")
+        val cleanNumberStr = target.removePrefix("item").removePrefix("#").trim()
+        val itemId = cleanNumberStr.toIntOrNull()
+        if (itemId != null) {
+            val db = com.projectkaka.inventory.data.local.AppDatabase.getInstance(ctx)
+            val item = db.itemDao().getItemById(itemId)
+            if (item == null) {
+                return TerminalResult.Failure("Item #$itemId not found in database.")
+            }
+            if (item.imagePath.isBlank()) {
+                return TerminalResult.Failure("Item #$itemId ('${item.name}') does not have an attached image.")
+            }
+            val imgFile = java.io.File(item.imagePath)
+            if (!imgFile.exists()) {
+                return TerminalResult.Failure("Image file for Item #$itemId is missing on disk: ${imgFile.name}")
+            }
+            val fileRes = com.projectkaka.inventory.util.ImageIntegrityManager.verifySingleFile(ctx, imgFile)
+            val statusStr = when (fileRes.status) {
+                com.projectkaka.inventory.util.ImageIntegrityManager.FileIntegrityStatus.INTACT -> "INTACT (Matches cryptographic baseline)"
+                com.projectkaka.inventory.util.ImageIntegrityManager.FileIntegrityStatus.ALTERED -> "ALTERED / CORRUPTED! Expected ${fileRes.expectedHash.take(10)}..., Found ${fileRes.actualHash.take(10)}..."
+                com.projectkaka.inventory.util.ImageIntegrityManager.FileIntegrityStatus.UNTRACKED -> "UNTRACKED (No baseline hash recorded)"
+            }
+            return if (fileRes.status == com.projectkaka.inventory.util.ImageIntegrityManager.FileIntegrityStatus.INTACT) {
+                TerminalResult.Success(
+                    "Verified Item #$itemId ('${item.name}'):\n" +
+                    "• File: ${imgFile.name} (${fileRes.formatSize()})\n" +
+                    "• SHA-256: ${fileRes.actualHash}\n" +
+                    "• Status: $statusStr"
+                )
+            } else {
+                TerminalResult.Failure(
+                    "Integrity Alert for Item #$itemId ('${item.name}'):\n" +
+                    "• File: ${imgFile.name} (${fileRes.formatSize()})\n" +
+                    "• SHA-256: ${fileRes.actualHash}\n" +
+                    "• Status: $statusStr"
+                )
+            }
+        }
+
+        // 2. Check if target is a specific file name or pattern (not generic "images" or "all")
+        if (target != "images" && target != "all" && target.isNotBlank()) {
+            val matchingFile = com.projectkaka.inventory.util.ImageIntegrityManager.findFileByNameOrPrefix(ctx, target)
+            if (matchingFile != null) {
+                val fileRes = com.projectkaka.inventory.util.ImageIntegrityManager.verifySingleFile(ctx, matchingFile)
+                val statusStr = when (fileRes.status) {
+                    com.projectkaka.inventory.util.ImageIntegrityManager.FileIntegrityStatus.INTACT -> "INTACT (Matches baseline)"
+                    com.projectkaka.inventory.util.ImageIntegrityManager.FileIntegrityStatus.ALTERED -> "ALTERED! Expected ${fileRes.expectedHash.take(10)}..., Found ${fileRes.actualHash.take(10)}..."
+                    com.projectkaka.inventory.util.ImageIntegrityManager.FileIntegrityStatus.UNTRACKED -> "UNTRACKED (No baseline hash recorded)"
+                }
+                return TerminalResult.Success(
+                    "Verified File '${matchingFile.name}':\n" +
+                    "• Size: ${fileRes.formatSize()}\n" +
+                    "• SHA-256: ${fileRes.actualHash}\n" +
+                    "• Status: $statusStr"
+                )
+            } else {
+                return TerminalResult.Failure("No item or image file found matching '$target'.")
+            }
+        }
+
+        // 3. Global verification (verify/ or verify/ images or verify/ all)
+        val res = com.projectkaka.inventory.util.ImageIntegrityManager.verifyAllImages(ctx)
+        return if (res.alteredFiles.isEmpty() && res.missingFiles.isEmpty()) {
+            val lines = mutableListOf<String>()
+            lines.add("Verified ${res.intactCount} saved image(s) (${res.formatTotalSize()}):")
+            lines.add("All cryptographic checksums intact. Zero alterations detected.")
+            if (res.intactFiles.isNotEmpty()) {
+                lines.add("\nVerified Files:")
+                res.intactFiles.take(8).forEach { f ->
+                    lines.add("  • ${f.fileName} (${f.formatSize()}) | sha256: ${f.sha256.take(12)}... [INTACT]")
+                }
+                if (res.intactFiles.size > 8) {
+                    lines.add("  ... and ${res.intactFiles.size - 8} more file(s).")
+                }
+            }
+            TerminalResult.Success(lines.joinToString("\n"))
+        } else {
+            val details = res.alteredFiles.joinToString("\n") { "  • ${it.fileName} (Expected ${it.expectedHash.take(8)}..., Found ${it.actualHash.take(8)}...)" }
+            TerminalResult.Failure("Integrity alert! ${res.alteredFiles.size} altered file(s), ${res.missingFiles.size} missing file(s) detected:\n$details")
+        }
+    }
+
+    private fun executeHistory(command: TerminalCommand.History): TerminalResult {
+        val history = preferences?.getCommandHistory() ?: emptyList()
+        if (history.isEmpty()) return TerminalResult.Success("Command history is empty.")
+        val count = minOf(command.count, history.size)
+        val recent = history.takeLast(count)
+        val formatted = recent.mapIndexed { idx, cmd -> " ${idx + 1}. $cmd" }.joinToString("\n")
+        return TerminalResult.Success("Recent commands:\n$formatted")
     }
 
     private suspend fun executeAccountAdd(command: TerminalCommand.AccountAdd): TerminalResult {
         val type = try {
-            com.projectkaka.inventory.data.local.entity.AccountType.valueOf(command.typeToken.uppercase())
+            when (command.typeToken.lowercase()) {
+                "debt", "loan", "due", "iou", "dhar" -> com.projectkaka.inventory.data.local.entity.AccountType.LIABILITY
+                "wallet", "haat", "pocket" -> com.projectkaka.inventory.data.local.entity.AccountType.CASH
+                "cost", "khoroch" -> com.projectkaka.inventory.data.local.entity.AccountType.EXPENSE
+                "income", "aay" -> com.projectkaka.inventory.data.local.entity.AccountType.REVENUE
+                else -> com.projectkaka.inventory.data.local.entity.AccountType.valueOf(command.typeToken.uppercase())
+            }
         } catch (e: Exception) {
-            return TerminalResult.Failure("Invalid account type: ${command.typeToken}")
+            return TerminalResult.Failure("Invalid account type: '${command.typeToken}'. Use CASH, LIABILITY, ASSET, EXPENSE, or REVENUE.")
+        }
+        val existing = financeRepo.resolveAccountsExact(command.name)
+        if (existing.isNotEmpty()) {
+            return TerminalResult.Failure("Account '${existing.first().name}' already exists.")
         }
         val acc = com.projectkaka.inventory.data.local.entity.AccountEntity(
             name = command.name,
@@ -158,7 +755,7 @@ class TerminalExecutor(
             openingBalance = command.balance ?: Money(0L)
         )
         financeRepo.insertAccount(acc)
-        return TerminalResult.Success("Created account: ${command.name}")
+        return TerminalResult.Success("Created account: ${command.name} (${type.name})")
     }
 
     private suspend fun executeAccountAction(command: TerminalCommand.AccountAction): TerminalResult {
@@ -200,12 +797,21 @@ class TerminalExecutor(
     private suspend fun executeReport(command: TerminalCommand.Report): TerminalResult {
         return when (command.reportType) {
             "bs" -> {
+                financeRepo.runInvariantCheck()
                 val accounts = financeRepo.getAllAccountsSnapshot().filter { it.isActive }
-                val assets = accounts.filter { it.type == com.projectkaka.inventory.data.local.entity.AccountType.ASSET || it.type == com.projectkaka.inventory.data.local.entity.AccountType.CASH }
-                val liabilities = accounts.filter { it.type == com.projectkaka.inventory.data.local.entity.AccountType.LIABILITY }
+                
+                val isZeroPlaceholder = { name: String, bal: Long ->
+                    (name.equals("Assets", ignoreCase = true) || name.equals("Liabilities", ignoreCase = true)) && bal == 0L
+                }
+
+                val cashEquivalents = accounts.filter { it.type == com.projectkaka.inventory.data.local.entity.AccountType.CASH }
+                val otherAssets = accounts.filter { it.type == com.projectkaka.inventory.data.local.entity.AccountType.ASSET && !isZeroPlaceholder(it.name, it.balance.minorUnits) }
+                val liabilities = accounts.filter { it.type == com.projectkaka.inventory.data.local.entity.AccountType.LIABILITY && !isZeroPlaceholder(it.name, it.balance.minorUnits) }
                 val equity = accounts.filter { it.type == com.projectkaka.inventory.data.local.entity.AccountType.CAPITAL }
                 
-                val totalAssets = assets.sumOf { it.balance.minorUnits }
+                val totalCash = cashEquivalents.sumOf { it.balance.minorUnits }
+                val totalOtherAssets = otherAssets.sumOf { it.balance.minorUnits }
+                val totalAssets = totalCash + totalOtherAssets
                 val totalLiabilities = liabilities.sumOf { it.balance.minorUnits }
                 val totalEquity = equity.sumOf { it.balance.minorUnits }
                 
@@ -215,17 +821,35 @@ class TerminalExecutor(
                 
                 val finalEquity = totalEquity + netIncome
                 
-                TerminalResult.Success(
-                    "BALANCE SHEET\n" +
-                    "Assets:\n" + assets.joinToString("\n") { "  ${it.name}: ${it.balance.format()}" } + "\n" +
-                    "Total Assets: ${Money(totalAssets).format()}\n\n" +
-                    "Liabilities:\n" + liabilities.joinToString("\n") { "  ${it.name}: ${it.balance.format()}" } + "\n" +
-                    "Total Liabilities: ${Money(totalLiabilities).format()}\n\n" +
-                    "Equity:\n" + equity.joinToString("\n") { "  ${it.name}: ${it.balance.format()}" } + "\n" +
-                    "Net Income: ${Money(netIncome).format()}\n" +
-                    "Total Equity (incl. NI): ${Money(finalEquity).format()}\n\n" +
-                    "Equation: A (${Money(totalAssets).format()}) = L+E (${Money(totalLiabilities + finalEquity).format()})"
-                )
+                val sb = StringBuilder("BALANCE SHEET\n")
+                sb.append("Assets:\n")
+                if (cashEquivalents.isNotEmpty()) {
+                    sb.append("  Cash & Cash Equivalents:\n")
+                    cashEquivalents.forEach { sb.append("    • ${it.name}: ${it.balance.format()}\n") }
+                    sb.append("    Subtotal: ${Money(totalCash).format()}\n")
+                }
+                if (otherAssets.isNotEmpty()) {
+                    sb.append("  Other Assets:\n")
+                    otherAssets.forEach { sb.append("    • ${it.name}: ${it.balance.format()}\n") }
+                    sb.append("    Subtotal: ${Money(totalOtherAssets).format()}\n")
+                }
+                sb.append("Total Assets: ${Money(totalAssets).format()}\n\n")
+                
+                sb.append("Liabilities:\n")
+                if (liabilities.isEmpty()) {
+                    sb.append("  (None)\n")
+                } else {
+                    liabilities.forEach { sb.append("  • ${it.name}: ${it.balance.format()}\n") }
+                }
+                sb.append("Total Liabilities: ${Money(totalLiabilities).format()}\n\n")
+                
+                sb.append("Equity:\n")
+                equity.forEach { sb.append("  • ${it.name}: ${it.balance.format()}\n") }
+                sb.append("Net Income: ${Money(netIncome).format()}\n")
+                sb.append("Total Equity (incl. NI): ${Money(finalEquity).format()}\n\n")
+                sb.append("Equation: A (${Money(totalAssets).format()}) = L+E (${Money(totalLiabilities + finalEquity).format()})")
+                
+                TerminalResult.Success(sb.toString().trimEnd())
             }
             "pnl" -> {
                 val accounts = financeRepo.getAllAccountsSnapshot().filter { it.isActive }
@@ -260,6 +884,22 @@ class TerminalExecutor(
             "rename" -> {
                 financeRepo.updateAccount(account.copy(name = command.newName))
                 TerminalResult.Success("Renamed account '${account.name}' to '${command.newName}'")
+            }
+            "type" -> {
+                val newType = try {
+                    when (command.newName.lowercase()) {
+                        "debt", "loan", "due", "iou", "dhar" -> com.projectkaka.inventory.data.local.entity.AccountType.LIABILITY
+                        "wallet", "haat", "pocket" -> com.projectkaka.inventory.data.local.entity.AccountType.CASH
+                        "cost", "khoroch" -> com.projectkaka.inventory.data.local.entity.AccountType.EXPENSE
+                        "income", "aay" -> com.projectkaka.inventory.data.local.entity.AccountType.REVENUE
+                        else -> com.projectkaka.inventory.data.local.entity.AccountType.valueOf(command.newName.uppercase())
+                    }
+                } catch (e: Exception) {
+                    return TerminalResult.Failure("Invalid account type: '${command.newName}'. Use CASH, LIABILITY, ASSET, EXPENSE, CAPITAL, or REVENUE.")
+                }
+                financeRepo.updateAccount(account.copy(type = newType))
+                val recalculated = financeRepo.getAccountBalance(account.id) ?: com.projectkaka.inventory.model.Money(0L)
+                TerminalResult.Success("✓ Changed '${account.name}' type to ${newType.name}. Recalculated balance: ${recalculated.format()}")
             }
             else -> TerminalResult.Failure("Account alter action ${command.action} not fully implemented yet.")
         }

@@ -3,10 +3,17 @@ package com.projectkaka.inventory.search
 sealed interface TerminalCommand {
     data class Financial(
         val amount: com.projectkaka.inventory.model.Money,
-        val isCredit: Boolean,
-        val tokens: List<String>,
+        val debitToken: String,
+        val creditToken: String,
+        val note: String = "",
         val dateToken: String? = null
     ) : TerminalCommand
+
+    data class Man(val topic: String = "?") : TerminalCommand
+
+    data class Log(val rawFilter: String = "") : TerminalCommand
+
+    data class Snapshot(val action: String = "create") : TerminalCommand
 
     data class Init(val accountToken: String, val amount: com.projectkaka.inventory.model.Money) : TerminalCommand
     
@@ -21,12 +28,34 @@ sealed interface TerminalCommand {
         val isOut: Boolean, 
         val amount: com.projectkaka.inventory.model.Money, 
         val contactToken: String, 
+        val note: String = "",
         val dateToken: String? = null
     ) : TerminalCommand
 
     data class LedgerSettle(
         val contactToken: String, 
-        val amount: com.projectkaka.inventory.model.Money?
+        val amount: com.projectkaka.inventory.model.Money? = null,
+        val accountToken: String = "Cash"
+    ) : TerminalCommand
+
+    data class Charge(
+        val accountToken: String?, 
+        val rateToken: String?, 
+        val action: String = "set" // "set", "get", "all", "clear"
+    ) : TerminalCommand
+
+    data class Cashout(
+        val amount: com.projectkaka.inventory.model.Money,
+        val sourceToken: String,
+        val targetToken: String = "Cash"
+    ) : TerminalCommand
+
+    data class Verify(
+        val target: String = "images"
+    ) : TerminalCommand
+
+    data class History(
+        val count: Int = 20
     ) : TerminalCommand
 
     data class AccountAdd(

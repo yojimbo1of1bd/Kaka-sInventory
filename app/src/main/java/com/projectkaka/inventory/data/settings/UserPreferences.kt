@@ -99,6 +99,9 @@ class UserPreferences(context: Context) {
     )
     val hiddenAccountIds: StateFlow<Set<Int>> = _hiddenAccountIds.asStateFlow()
 
+    private val _incomeCycleDay = MutableStateFlow(prefs.getInt(KEY_INCOME_CYCLE_DAY, 1))
+    val incomeCycleDay: StateFlow<Int> = _incomeCycleDay.asStateFlow()
+
     private val _businessMode = MutableStateFlow(prefs.getBoolean(KEY_BUSINESS_MODE, false))
     val businessMode: StateFlow<Boolean> = _businessMode.asStateFlow()
 
@@ -262,6 +265,66 @@ class UserPreferences(context: Context) {
         _businessMode.value = enabled
     }
 
+    fun setIncomeCycleDay(day: Int) {
+        val clamped = day.coerceIn(1, 31)
+        prefs.edit().putInt(KEY_INCOME_CYCLE_DAY, clamped).apply()
+        _incomeCycleDay.value = clamped
+    }
+
+    // ── Cashout Charge Rates ──
+    fun setAccountChargeRate(accountName: String, ratePercent: Double) {
+        val key = "charge_rate_" + accountName.trim().lowercase()
+        prefs.edit().putFloat(key, ratePercent.toFloat()).apply()
+    }
+
+    fun getAccountChargeRate(accountName: String): Double? {
+        val key = "charge_rate_" + accountName.trim().lowercase()
+        if (!prefs.contains(key)) return null
+        return prefs.getFloat(key, 0f).toDouble()
+    }
+
+    fun removeAccountChargeRate(accountName: String) {
+        val key = "charge_rate_" + accountName.trim().lowercase()
+        prefs.edit().remove(key).apply()
+    }
+
+    fun getAllAccountChargeRates(): Map<String, Double> {
+        val prefix = "charge_rate_"
+        val result = mutableMapOf<String, Double>()
+        prefs.all.forEach { (k, v) ->
+            if (k.startsWith(prefix)) {
+                val accName = k.removePrefix(prefix)
+                val rate = when (v) {
+                    is Float -> v.toDouble()
+                    is Double -> v
+                    is Number -> v.toDouble()
+                    else -> null
+                }
+                if (rate != null) result[accName] = rate
+            }
+        }
+        return result
+    }
+
+    // ── Terminal History ──
+    fun getCommandHistory(): List<String> {
+        val raw = prefs.getString("terminal_command_history", "") ?: ""
+        if (raw.isBlank()) return emptyList()
+        return raw.split("\n").filter { it.isNotBlank() }
+    }
+
+    fun addCommandToHistory(command: String) {
+        val trimmed = command.trim()
+        if (trimmed.isBlank()) return
+        val current = getCommandHistory().toMutableList()
+        if (current.lastOrNull() == trimmed) return // Avoid duplicate consecutive
+        current.add(trimmed)
+        if (current.size > 100) {
+            current.removeAt(0)
+        }
+        prefs.edit().putString("terminal_command_history", current.joinToString("\n")).apply()
+    }
+
     private fun loadThemeMode(): ThemeMode {
         val modeStr = prefs.getString(KEY_THEME_MODE, ThemeMode.SYSTEM.name)
         return try {
@@ -304,5 +367,6 @@ class UserPreferences(context: Context) {
         const val KEY_LOCKOUT_UNTIL = "lockout_until"
         const val KEY_BUSINESS_MODE = "business_mode"
         const val KEY_HAS_SEEN_DOC_MODE = "has_seen_doc_mode"
+        const val KEY_INCOME_CYCLE_DAY = "income_cycle_day"
     }
 }

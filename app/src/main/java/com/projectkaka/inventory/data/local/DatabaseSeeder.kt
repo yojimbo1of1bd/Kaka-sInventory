@@ -193,6 +193,13 @@ object DatabaseSeeder {
                 VALUES ('${cat.name}', '${cat.type.name}', '${cat.aliases}', $now)
                 """.trimIndent()
             )
+            val accType = if (cat.type == CategoryType.INCOME) AccountType.REVENUE else AccountType.EXPENSE
+            db.execSQL(
+                """
+                INSERT OR IGNORE INTO accounts (name, type, aliases, opening_balance, balance_minor, is_active, created_at)
+                VALUES ('${cat.name}', '${accType.name}', '${cat.aliases}', 0, 0, 1, $now)
+                """.trimIndent()
+            )
         }
     }
 }

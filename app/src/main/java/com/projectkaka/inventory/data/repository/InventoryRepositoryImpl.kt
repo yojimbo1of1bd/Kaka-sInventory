@@ -18,14 +18,19 @@ import kotlinx.coroutines.withContext
 import com.projectkaka.inventory.data.local.dao.BasketDao
 import com.projectkaka.inventory.data.local.entity.BasketEntity
 import com.projectkaka.inventory.data.local.entity.BasketItemCrossRef
+import com.projectkaka.inventory.data.settings.UserPreferences
 
 class InventoryRepositoryImpl(
     private val itemDao: ItemDao,
     private val careTaskDao: CareTaskDao,
     private val financeRepository: FinanceRepository,
     private val basketDao: BasketDao,
+    private val preferences: UserPreferences? = null,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 ) : InventoryRepository {
+
+    private val isBusinessMode: Boolean
+        get() = preferences?.businessMode?.value ?: false
 
     override fun getActiveItems(): Flow<List<ItemEntity>> = itemDao.getActiveItems()
     override fun getAllInventoryItems(): Flow<List<ItemEntity>> = itemDao.getAllInventoryItems()
@@ -46,7 +51,7 @@ class InventoryRepositoryImpl(
     override suspend fun saveItem(item: ItemEntity): Long =
         withContext(ioDispatcher) { 
             val id = itemDao.insertItem(item)
-            if (item.estimatedValue.minorUnits > 0) {
+            if (isBusinessMode && item.estimatedValue.minorUnits > 0) {
                 val invAccId = financeRepository.resolveAccountsExact("Inventory").firstOrNull()?.id ?: 1
                 val capitalAccId = financeRepository.resolveAccountsExact("Capital").firstOrNull()?.id ?: 1
                 val postings = listOf(
@@ -69,7 +74,7 @@ class InventoryRepositoryImpl(
         withContext(ioDispatcher) { 
             val oldItem = itemDao.getItemById(item.id)
             itemDao.updateItem(item)
-            if (oldItem != null && item.estimatedValue.minorUnits != oldItem.estimatedValue.minorUnits) {
+            if (isBusinessMode && oldItem != null && item.estimatedValue.minorUnits != oldItem.estimatedValue.minorUnits) {
                 val diff = item.estimatedValue.minorUnits - oldItem.estimatedValue.minorUnits
                 val invAccId = financeRepository.resolveAccountsExact("Inventory").firstOrNull()?.id ?: 1
                 val capitalAccId = financeRepository.resolveAccountsExact("Capital").firstOrNull()?.id ?: 1
@@ -107,14 +112,18 @@ class InventoryRepositoryImpl(
                 val journalNote = "${status.name.lowercase().replaceFirstChar { it.uppercase() }} item: ${item.name}"
                 
                 if (status == ItemStatus.SOLD) {
-                    postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, cashAccId, recoveredValue, isCredit = false, note = journalNote))
-                    postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, salesAccId, recoveredValue, isCredit = true, note = journalNote))
-                    postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, cogsAccId, item.estimatedValue, isCredit = false, note = journalNote))
-                    postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, invAccId, item.estimatedValue, isCredit = true, note = journalNote))
-                } else if (status == ItemStatus.DONATED) {
+                    if (recoveredValue.minorUnits > 0L) {
+                        postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, cashAccId, recoveredValue, isCredit = false, note = journalNote))
+                        postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, salesAccId, recoveredValue, isCredit = true, note = journalNote))
+                    }
+                    if (isBusinessMode && item.estimatedValue.minorUnits > 0L) {
+                        postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, cogsAccId, item.estimatedValue, isCredit = false, note = journalNote))
+                        postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, invAccId, item.estimatedValue, isCredit = true, note = journalNote))
+                    }
+                } else if (isBusinessMode && status == ItemStatus.DONATED && item.estimatedValue.minorUnits > 0L) {
                     postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, charityAccId, item.estimatedValue, isCredit = false, note = journalNote))
                     postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, invAccId, item.estimatedValue, isCredit = true, note = journalNote))
-                } else if (status == ItemStatus.TRASHED) {
+                } else if (isBusinessMode && status == ItemStatus.TRASHED && item.estimatedValue.minorUnits > 0L) {
                     postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, lossAccId, item.estimatedValue, isCredit = false, note = journalNote))
                     postings.add(com.projectkaka.inventory.data.local.entity.PostingEntity(0, 0, invAccId, item.estimatedValue, isCredit = true, note = journalNote))
                 }
@@ -135,7 +144,7 @@ class InventoryRepositoryImpl(
     override suspend fun deleteItem(item: ItemEntity) =
         withContext(ioDispatcher) { 
             itemDao.deleteItem(item) 
-            if (item.estimatedValue.minorUnits > 0) {
+            if (isBusinessMode && item.estimatedValue.minorUnits > 0) {
                 val invAccId = financeRepository.resolveAccountsExact("Inventory").firstOrNull()?.id ?: 1
                 val capitalAccId = financeRepository.resolveAccountsExact("Capital").firstOrNull()?.id ?: 1
                 val postings = listOf(

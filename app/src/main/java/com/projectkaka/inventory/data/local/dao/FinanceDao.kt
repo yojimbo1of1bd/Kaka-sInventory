@@ -155,8 +155,14 @@ interface FinanceDao {
         SELECT a.*
         FROM accounts a
         WHERE a.balance_minor != (a.opening_balance + 
-            COALESCE((SELECT SUM(p.amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = a.id AND p.is_credit = 1 AND j.status = 'POSTED'), 0) - 
-            COALESCE((SELECT SUM(p.amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = a.id AND p.is_credit = 0 AND j.status = 'POSTED'), 0))
+            CASE 
+                WHEN a.type IN ('CASH', 'ASSET', 'EXPENSE') THEN 
+                    COALESCE((SELECT SUM(p.amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = a.id AND p.is_credit = 0 AND j.status = 'POSTED'), 0) - 
+                    COALESCE((SELECT SUM(p.amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = a.id AND p.is_credit = 1 AND j.status = 'POSTED'), 0)
+                ELSE 
+                    COALESCE((SELECT SUM(p.amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = a.id AND p.is_credit = 1 AND j.status = 'POSTED'), 0) - 
+                    COALESCE((SELECT SUM(p.amount) FROM postings p INNER JOIN journal_entries j ON j.id = p.journal_entry_id WHERE p.account_id = a.id AND p.is_credit = 0 AND j.status = 'POSTED'), 0)
+            END)
         """
     )
     suspend fun getAccountsWithMismatchedBalances(): List<AccountEntity>
@@ -435,6 +441,39 @@ interface FinanceDao {
 
     @Query("SELECT * FROM ledger_entries WHERE id = :id LIMIT 1")
     suspend fun getLedgerEntryById(id: Int): LedgerEntryEntity?
+
+    @Query("SELECT DISTINCT contact_name FROM ledger_entries")
+    suspend fun getDistinctContactNames(): List<String>
+
+    @Query("SELECT * FROM ledger_entries WHERE is_settled = 0 AND contact_name LIKE :contactQuery ORDER BY created_at ASC")
+    suspend fun getUnsettledEntriesForContact(contactQuery: String): List<LedgerEntryEntity>
+
+    @Query("SELECT * FROM ledger_entries WHERE is_settled = 0 AND LOWER(contact_name) = LOWER(:contactName) ORDER BY created_at ASC")
+    suspend fun getUnsettledEntriesForExactContact(contactName: String): List<LedgerEntryEntity>
+
+    @Query("""
+        SELECT 
+          p.id AS id,
+          p.amount AS amount,
+          p.account_id AS account_id,
+          NULL AS category_id,
+          CAST(j.id AS TEXT) AS transfer_id, 
+          NULL AS counter_account_id,
+          CASE 
+            WHEN a.type = 'EXPENSE' THEN 'EXPENSE'
+            WHEN a.type = 'REVENUE' THEN 'INCOME'
+            ELSE 'TRANSFER'
+          END AS type,
+          p.is_credit AS is_credit,
+          p.note AS note,
+          j.timestamp AS timestamp
+        FROM postings p
+        INNER JOIN journal_entries j ON j.id = p.journal_entry_id
+        INNER JOIN accounts a ON a.id = p.account_id
+        WHERE j.status = 'POSTED' AND j.timestamp BETWEEN :startMs AND :endMs
+        ORDER BY j.timestamp ASC, p.id ASC
+    """)
+    suspend fun getTransactionsInRangeSnapshot(startMs: Long, endMs: Long): List<TransactionEntity>
 
     /** Sum of all unsettled receivables — what others owe you. */
     @Query(

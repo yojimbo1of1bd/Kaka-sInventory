@@ -30,8 +30,11 @@ class StatementsViewModel(application: Application) : AndroidViewModel(applicati
 
     val uiState: StateFlow<StatementsUiState> = financeRepo.observeAllAccountBalances()
         .map { accounts ->
-            val assets = accounts.filter { it.type == AccountType.ASSET || it.type == AccountType.CASH }
-            val liabilities = accounts.filter { it.type == AccountType.LIABILITY }
+            val isZeroPlaceholder = { name: String, bal: Long ->
+                (name.equals("Assets", ignoreCase = true) || name.equals("Liabilities", ignoreCase = true)) && bal == 0L
+            }
+            val assets = accounts.filter { (it.type == AccountType.ASSET || it.type == AccountType.CASH) && !isZeroPlaceholder(it.name, it.balance.minorUnits) }
+            val liabilities = accounts.filter { it.type == AccountType.LIABILITY && !isZeroPlaceholder(it.name, it.balance.minorUnits) }
             val equity = accounts.filter { it.type == AccountType.CAPITAL }
             val revenues = accounts.filter { it.type == AccountType.REVENUE }
             val expenses = accounts.filter { it.type == AccountType.EXPENSE }

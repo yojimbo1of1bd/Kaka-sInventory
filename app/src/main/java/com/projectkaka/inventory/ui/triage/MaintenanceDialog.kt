@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -41,6 +42,10 @@ fun MaintenanceDialog(
 ) {
     var taskName by remember { mutableStateOf("") }
     var frequency by remember { mutableStateOf("") }
+
+    var pushToCalendar by remember { mutableStateOf(false) }
+    var setAlarmReminder by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     val parsedFrequency = frequency.toIntOrNull()
     val canConfirm = taskName.isNotBlank() && parsedFrequency != null && parsedFrequency > 0
@@ -88,12 +93,44 @@ fun MaintenanceDialog(
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
+                Spacer(Modifier.height(12.dp))
+                Text("Reminders & Notifications", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = pushToCalendar,
+                        onCheckedChange = { pushToCalendar = it }
+                    )
+                    Text("Push to Phone Calendar", fontSize = 13.sp)
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = setAlarmReminder,
+                        onCheckedChange = { setAlarmReminder = it }
+                    )
+                    Text("Set Alarm (9:00 AM)", fontSize = 13.sp)
+                }
             }
         },
         confirmButton = {
             Button(
                 enabled = canConfirm,
-                onClick = { onConfirm(taskName, parsedFrequency ?: 1) },
+                onClick = {
+                    val freq = parsedFrequency ?: 1
+                    if (pushToCalendar) {
+                        com.projectkaka.inventory.util.CareReminderManager.pushToCalendar(context, item.name, taskName, freq)
+                    }
+                    if (setAlarmReminder) {
+                        com.projectkaka.inventory.util.CareReminderManager.setAlarm(context, item.name, taskName, 9, 0)
+                    }
+                    onConfirm(taskName, freq)
+                },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary

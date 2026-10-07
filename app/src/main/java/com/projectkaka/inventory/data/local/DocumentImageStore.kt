@@ -71,6 +71,9 @@ object DocumentImageStore {
         // 4. Delete temp JPEG scratch file
         if (sourceJpeg.exists()) sourceJpeg.delete()
 
+        // 5. Compute and register SHA-256 integrity hash
+        com.projectkaka.inventory.util.ImageIntegrityManager.registerImageHash(target)
+
         PageImageResult(file = target, sizeBytes = target.length())
     }
 

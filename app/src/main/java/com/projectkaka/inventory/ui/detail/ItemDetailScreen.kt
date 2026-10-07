@@ -18,6 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -336,6 +338,7 @@ private fun DetailContent(
                 ) {
                     tasks.forEach { task ->
                         TaskRow(
+                            itemName = item.name,
                             task = task,
                             overdueDays = DueTask.overdueDays(task, now),
                             onComplete = { onCompleteTask(task) },
@@ -352,12 +355,14 @@ private fun DetailContent(
 
 @Composable
 private fun TaskRow(
+    itemName: String,
     task: CareTaskEntity,
     overdueDays: Int,
     onComplete: () -> Unit,
     onDelete: () -> Unit
 ) {
     val overdue = overdueDays > 0
+    val context = androidx.compose.ui.platform.LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -379,6 +384,39 @@ private fun TaskRow(
                 color = if (overdue) Color(0xFFE74C3C) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold
+            )
+        }
+        IconButton(
+            onClick = {
+                com.projectkaka.inventory.util.CareReminderManager.pushToCalendar(
+                    context,
+                    itemName,
+                    task.taskName,
+                    task.frequencyDays
+                )
+            }
+        ) {
+            Icon(
+                Icons.Default.DateRange,
+                contentDescription = "Push to Calendar",
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+        IconButton(
+            onClick = {
+                com.projectkaka.inventory.util.CareReminderManager.setAlarm(
+                    context,
+                    itemName,
+                    task.taskName,
+                    9,
+                    0
+                )
+            }
+        ) {
+            Icon(
+                Icons.Default.Alarm,
+                contentDescription = "Set Alarm",
+                tint = MaterialTheme.colorScheme.secondary
             )
         }
         IconButton(onClick = onComplete) {

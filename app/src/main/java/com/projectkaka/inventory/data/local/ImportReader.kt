@@ -22,6 +22,21 @@ import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
 
 import androidx.room.withTransaction
+import com.projectkaka.inventory.util.ImageIntegrityManager
+
+class BalanceMismatchException(
+    message: String,
+    val details: String? = null
+) : Exception(message)
+
+data class BackupInspection(
+    val isValid: Boolean,
+    val hasBalanceMismatch: Boolean,
+    val mismatchReason: String? = null,
+    val itemCount: Int = 0,
+    val documentCount: Int = 0,
+    val hasFinance: Boolean = false
+)
 
 data class RestoreResult(
     val itemsRestored: Int,
@@ -35,16 +50,276 @@ data class RestoreResult(
 object ImportReader {
 
     /**
-     * Reads a `.kaka` ZIP file from the given [uri].
-     * Extracts images to the app's image folder.
-     * Parses the `data.json` and inserts/merges all entities into the database.
+     * Inspects a `.kaka` backup without altering the database.
+     * Identifies whether the backup contains balance discrepancies, clashes, or orphaned records.
      */
-    suspend fun restoreKakaZip(context: Context, uri: Uri, db: AppDatabase): RestoreResult =
+    suspend fun inspectKakaZip(context: Context, uri: Uri): BackupInspection =
+        withContext(Dispatchers.IO) {
+            var jsonData: String? = null
+            try {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    ZipInputStream(stream).use { zis ->
+                        var entry = zis.nextEntry
+                        while (entry != null) {
+                            val entryName = entry.name.replace('\\', '/')
+                            if (entryName == "data.json" || entryName.endsWith("/data.json")) {
+                                jsonData = zis.reader().readText()
+                                break
+                            }
+                            zis.closeEntry()
+                            entry = zis.nextEntry
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                return@withContext BackupInspection(
+                    isValid = false,
+                    hasBalanceMismatch = false,
+                    mismatchReason = "Unable to read backup file: ${e.message}"
+                )
+            }
+
+            if (jsonData == null) {
+                return@withContext BackupInspection(
+                    isValid = false,
+                    hasBalanceMismatch = false,
+                    mismatchReason = "Invalid backup: data.json missing"
+                )
+            }
+
+            var itemCount = 0
+            var docCount = 0
+
+            try {
+                val root = JSONObject(jsonData!!)
+                val version = root.optInt("version", 2)
+                val isV3 = version >= 3
+
+                fun parseMoneyVal(obj: JSONObject, key: String): Long {
+                    return if (isV3) {
+                        obj.optLong(key, 0L)
+                    } else {
+                        val strValue = obj.optString(key, "0")
+                        try {
+                            com.projectkaka.inventory.model.Money.fromDecimalString(strValue).minorUnits
+                        } catch (e: Exception) {
+                            0L
+                        }
+                    }
+                }
+
+                val itemsArr = root.optJSONArray("items")
+                val docsArr = root.optJSONArray("documents")
+                itemCount = itemsArr?.length() ?: 0
+                docCount = docsArr?.length() ?: 0
+
+                val finObj = root.optJSONObject("finance")
+                if (finObj == null) {
+                    return@withContext BackupInspection(
+                        isValid = true,
+                        hasBalanceMismatch = false,
+                        itemCount = itemCount,
+                        documentCount = docCount,
+                        hasFinance = false
+                    )
+                }
+
+                // Check liability ledger clash flags
+                if (finObj.optBoolean("liabilityLedgerSkippedDueToClash", false)) {
+                    val reasons = finObj.optJSONArray("liabilityLedgerClashReasons")
+                    val reasonStr = if (reasons != null && reasons.length() > 0) {
+                        (0 until reasons.length()).joinToString("; ") { reasons.getString(it) }
+                    } else "Liability ledger clash detected in backup"
+                    return@withContext BackupInspection(
+                        isValid = true,
+                        hasBalanceMismatch = true,
+                        mismatchReason = reasonStr,
+                        itemCount = itemCount,
+                        documentCount = docCount,
+                        hasFinance = true
+                    )
+                }
+
+                val accsArr = finObj.optJSONArray("accounts")
+                val accountIds = mutableSetOf<Int>()
+                val accountTypes = mutableMapOf<Int, String>()
+                val accountOpening = mutableMapOf<Int, Long>()
+                val accountStated = mutableMapOf<Int, Long?>()
+
+                if (accsArr != null) {
+                    for (i in 0 until accsArr.length()) {
+                        val a = accsArr.getJSONObject(i)
+                        val id = a.optInt("id", i + 1)
+                        accountIds.add(id)
+                        accountTypes[id] = a.optString("type", "CASH")
+                        val opening = parseMoneyVal(a, "openingBalance")
+                        accountOpening[id] = opening
+                        val stated = if (a.has("balance")) parseMoneyVal(a, "balance")
+                        else if (a.has("balance_minor")) a.optLong("balance_minor")
+                        else null
+                        accountStated[id] = stated
+                    }
+                }
+
+                val txsArr = finObj.optJSONArray("transactions")
+                val accountDeltas = mutableMapOf<Int, Long>()
+                val txIds = mutableSetOf<Int>()
+
+                if (txsArr != null) {
+                    for (i in 0 until txsArr.length()) {
+                        val t = txsArr.getJSONObject(i)
+                        val tId = t.optInt("id", i + 1)
+                        txIds.add(tId)
+                        val amount = parseMoneyVal(t, "amount")
+                        if (amount < 0) {
+                            return@withContext BackupInspection(
+                                isValid = true,
+                                hasBalanceMismatch = true,
+                                mismatchReason = "Transaction #$tId contains invalid negative amount: $amount",
+                                itemCount = itemCount,
+                                documentCount = docCount,
+                                hasFinance = true
+                            )
+                        }
+
+                        val accId = t.optInt("accountId", -1)
+                        if (accId !in accountIds && accsArr != null && accsArr.length() > 0) {
+                            return@withContext BackupInspection(
+                                isValid = true,
+                                hasBalanceMismatch = true,
+                                mismatchReason = "Transaction #$tId references unknown account ID $accId",
+                                itemCount = itemCount,
+                                documentCount = docCount,
+                                hasFinance = true
+                            )
+                        }
+
+                        val isCredit = t.optBoolean("isCredit", false)
+                        val type = accountTypes[accId] ?: "CASH"
+                        val delta = if (type in listOf("CASH", "ASSET", "EXPENSE")) {
+                            if (!isCredit) amount else -amount
+                        } else {
+                            if (isCredit) amount else -amount
+                        }
+                        accountDeltas[accId] = (accountDeltas[accId] ?: 0L) + delta
+                    }
+                }
+
+                // Check stated balances against computed if stated was stored
+                for ((accId, stated) in accountStated) {
+                    if (stated != null) {
+                        val opening = accountOpening[accId] ?: 0L
+                        val computed = opening + (accountDeltas[accId] ?: 0L)
+                        if (stated != computed) {
+                            return@withContext BackupInspection(
+                                isValid = true,
+                                hasBalanceMismatch = true,
+                                mismatchReason = "Account #$accId stored balance ($stated) does not match calculated balance ($computed)",
+                                itemCount = itemCount,
+                                documentCount = docCount,
+                                hasFinance = true
+                            )
+                        }
+                    }
+                }
+
+                // Check ledger entries
+                val ledArr = finObj.optJSONArray("ledgerEntries")
+                if (ledArr != null) {
+                    for (i in 0 until ledArr.length()) {
+                        val l = ledArr.getJSONObject(i)
+                        val amt = parseMoneyVal(l, "amount")
+                        if (amt < 0) {
+                            return@withContext BackupInspection(
+                                isValid = true,
+                                hasBalanceMismatch = true,
+                                mismatchReason = "Liability ledger entry contains invalid negative amount",
+                                itemCount = itemCount,
+                                documentCount = docCount,
+                                hasFinance = true
+                            )
+                        }
+                        val accId = if (l.isNull("accountId")) null else l.getInt("accountId")
+                        if (accId != null && accId !in accountIds && accountIds.isNotEmpty()) {
+                            return@withContext BackupInspection(
+                                isValid = true,
+                                hasBalanceMismatch = true,
+                                mismatchReason = "Liability ledger references missing account #$accId",
+                                itemCount = itemCount,
+                                documentCount = docCount,
+                                hasFinance = true
+                            )
+                        }
+                        val linkTx = if (l.isNull("linkedTransactionId")) null else l.getInt("linkedTransactionId")
+                        if (linkTx != null && linkTx !in txIds && txIds.isNotEmpty()) {
+                            return@withContext BackupInspection(
+                                isValid = true,
+                                hasBalanceMismatch = true,
+                                mismatchReason = "Liability ledger references missing transaction #$linkTx",
+                                itemCount = itemCount,
+                                documentCount = docCount,
+                                hasFinance = true
+                            )
+                        }
+                    }
+                }
+
+                BackupInspection(
+                    isValid = true,
+                    hasBalanceMismatch = false,
+                    itemCount = itemCount,
+                    documentCount = docCount,
+                    hasFinance = true
+                )
+            } catch (e: Exception) {
+                if (itemCount > 0 || docCount > 0) {
+                    BackupInspection(
+                        isValid = true,
+                        hasBalanceMismatch = true,
+                        mismatchReason = "Financial verification discrepancy: ${e.message}",
+                        itemCount = itemCount,
+                        documentCount = docCount,
+                        hasFinance = true
+                    )
+                } else {
+                    BackupInspection(
+                        isValid = false,
+                        hasBalanceMismatch = false,
+                        mismatchReason = "Backup inspection failed: ${e.message}"
+                    )
+                }
+            }
+        }
+
+    /**
+     * Reads a `.kaka` ZIP file from the given [uri].
+     * Extracts images to the app's image folder and generates SHA256 integrity records.
+     * Parses `data.json` and inserts/merges entities into the database.
+     *
+     * If [skipFinance] is true, financial and liability records are declined (kept as-is in database),
+     * and only items, care tasks, baskets, documents, and document pages are restored.
+     */
+    suspend fun restoreKakaZip(
+        context: Context,
+        uri: Uri,
+        db: AppDatabase,
+        skipFinance: Boolean = false
+    ): RestoreResult =
         withContext(Dispatchers.IO) {
             val imageDir = LocalImageStore.imageDir(context)
             val docDir = DocumentImageStore.docDir(context)
             if (!imageDir.exists()) imageDir.mkdirs()
             if (!docDir.exists()) docDir.mkdirs()
+
+            if (!skipFinance) {
+                val inspection = inspectKakaZip(context, uri)
+                if (inspection.hasBalanceMismatch) {
+                    throw BalanceMismatchException(
+                        "Balance mismatch detected in backup file: ${inspection.mismatchReason}",
+                        inspection.mismatchReason
+                    )
+                }
+            }
 
             var jsonData: String? = null
 
@@ -53,22 +328,23 @@ object ImportReader {
                 ZipInputStream(stream).use { zis ->
                     var entry = zis.nextEntry
                     while (entry != null) {
-                        if (entry.name == "data.json") {
+                        val entryName = entry.name.replace('\\', '/')
+                        if (entryName == "data.json" || entryName.endsWith("/data.json")) {
                             jsonData = zis.reader().readText()
-                        } else if (entry.name.startsWith("images/") && !entry.isDirectory) {
-                            val fileName = File(entry.name).name
-                            val destFile = File(imageDir, fileName)
-                            // Overwrite or create image
-                            FileOutputStream(destFile).use { fos ->
-                                zis.copyTo(fos)
-                            }
-                        } else if (entry.name.startsWith("doc_images/") && !entry.isDirectory) {
-                            val fileName = File(entry.name).name
+                        } else if (entryName.contains("doc_images/") && !entry.isDirectory) {
+                            val fileName = File(entryName).name
                             val destFile = File(docDir, fileName)
-                            // Overwrite or create document page image
                             FileOutputStream(destFile).use { fos ->
                                 zis.copyTo(fos)
                             }
+                            ImageIntegrityManager.registerImageHash(destFile)
+                        } else if (entryName.contains("images/") && !entry.isDirectory) {
+                            val fileName = File(entryName).name
+                            val destFile = File(imageDir, fileName)
+                            FileOutputStream(destFile).use { fos ->
+                                zis.copyTo(fos)
+                            }
+                            ImageIntegrityManager.registerImageHash(destFile)
                         }
                         zis.closeEntry()
                         entry = zis.nextEntry
@@ -107,7 +383,16 @@ object ImportReader {
             var documentsRestored = 0
 
             db.withTransaction {
-                db.clearAllTables()
+                if (skipFinance) {
+                    // Only clear inventory and document tables, preserving financial tables
+                    db.openHelper.writableDatabase.execSQL("DELETE FROM care_tasks")
+                    db.openHelper.writableDatabase.execSQL("DELETE FROM basket_items")
+                    db.openHelper.writableDatabase.execSQL("DELETE FROM items")
+                    db.openHelper.writableDatabase.execSQL("DELETE FROM document_pages")
+                    db.openHelper.writableDatabase.execSQL("DELETE FROM documents")
+                } else {
+                    db.clearAllTables()
+                }
                 if (itemsArr != null) {
                     for (i in 0 until itemsArr.length()) {
                         val itemObj = itemsArr.getJSONObject(i)
@@ -197,137 +482,144 @@ object ImportReader {
                     }
                 }
 
-                val finObj = root.optJSONObject("finance")
-                if (finObj != null) {
-                    val accsArr = finObj.optJSONArray("accounts")
-                    if (accsArr != null) {
-                        for (i in 0 until accsArr.length()) {
-                            val accObj = accsArr.getJSONObject(i)
-                            val id = accObj.optInt("id", 0)
-                            val acc = AccountEntity(
-                                id = if (id > 0) id else 0,
-                                name = accObj.getString("name"),
-                                type = AccountType.valueOf(accObj.optString("type", "CASH")),
-                                aliases = accObj.optString("aliases", ""),
-                                openingBalance = parseMoney(accObj, "openingBalance"),
-                                isActive = accObj.optBoolean("isActive", true),
-                                createdAt = accObj.optLong("createdAt", System.currentTimeMillis())
-                            )
-                            db.financeDao().insertAccount(acc)
-                            accountsRestored++
-                        }
-                    }
-
-                    val catsArr = finObj.optJSONArray("categories")
-                    if (catsArr != null) {
-                        for (i in 0 until catsArr.length()) {
-                            val cObj = catsArr.getJSONObject(i)
-                            val id = cObj.optInt("id", 0)
-                            val cat = FinancialCategoryEntity(
-                                id = if (id > 0) id else 0,
-                                name = cObj.getString("name"),
-                                type = CategoryType.valueOf(cObj.optString("type", "EXPENSE")),
-                                aliases = cObj.optString("aliases", ""),
-                                createdAt = cObj.optLong("createdAt", System.currentTimeMillis())
-                            )
-                            db.financeDao().insertCategory(cat)
-                            categoriesRestored++
-                        }
-                    }
-
-                    val txsArr = finObj.optJSONArray("transactions")
-                    if (txsArr != null) {
-                        for (i in 0 until txsArr.length()) {
-                            val tObj = txsArr.getJSONObject(i)
-                            val id = tObj.optInt("id", 0)
-                            val amount = parseMoney(tObj, "amount")
-                            val accountId = tObj.getInt("accountId")
-                            val counterAccountIdRaw = if (tObj.isNull("counterAccountId")) null else tObj.getInt("counterAccountId")
-                            val isCredit = tObj.getBoolean("isCredit")
-                            val note = tObj.optString("note", "")
-                            val timestamp = tObj.optLong("timestamp", System.currentTimeMillis())
-                            val typeStr = tObj.optString("type", "EXPENSE")
-                            
-                            val journalEntryId = db.journalDao().insertJournalEntry(
-                                com.projectkaka.inventory.data.local.entity.JournalEntryEntity(
+                if (!skipFinance) {
+                    val finObj = root.optJSONObject("finance")
+                    if (finObj != null) {
+                        val accsArr = finObj.optJSONArray("accounts")
+                        if (accsArr != null) {
+                            for (i in 0 until accsArr.length()) {
+                                val accObj = accsArr.getJSONObject(i)
+                                val id = accObj.optInt("id", 0)
+                                val acc = AccountEntity(
                                     id = if (id > 0) id else 0,
-                                    timestamp = timestamp,
-                                    description = note,
-                                    status = com.projectkaka.inventory.data.local.entity.JournalStatus.POSTED,
-                                    approvalStatus = com.projectkaka.inventory.data.local.entity.ApprovalStatus.APPROVED
+                                    name = accObj.getString("name"),
+                                    type = AccountType.valueOf(accObj.optString("type", "CASH")),
+                                    aliases = accObj.optString("aliases", ""),
+                                    openingBalance = parseMoney(accObj, "openingBalance"),
+                                    isActive = accObj.optBoolean("isActive", true),
+                                    createdAt = accObj.optLong("createdAt", System.currentTimeMillis())
                                 )
-                            ).toInt()
-
-                            db.journalDao().insertPosting(
-                                com.projectkaka.inventory.data.local.entity.PostingEntity(
-                                    journalEntryId = journalEntryId,
-                                    accountId = accountId,
-                                    amount = amount,
-                                    isCredit = isCredit,
-                                    note = note
-                                )
-                            )
-
-                            val targetCounterId = if (counterAccountIdRaw != null) {
-                                counterAccountIdRaw
-                            } else {
-                                val accName = when (typeStr) {
-                                    "INCOME" -> "Income"
-                                    "DEBT_ISSUE", "DEBT_SETTLE" -> if (isCredit) "Liabilities" else "Assets"
-                                    else -> "Expenses"
-                                }
-                                val existingAcc = db.financeDao().getAccountByName(accName)
-                                if (existingAcc != null) existingAcc.id
-                                else {
-                                    val accType = when (typeStr) {
-                                        "INCOME" -> AccountType.REVENUE
-                                        "DEBT_ISSUE", "DEBT_SETTLE" -> if (isCredit) AccountType.LIABILITY else AccountType.ASSET
-                                        else -> AccountType.EXPENSE
-                                    }
-                                    db.financeDao().insertAccount(AccountEntity(name = accName, type = accType, openingBalance = com.projectkaka.inventory.model.Money.ZERO)).toInt()
-                                }
+                                db.financeDao().insertAccount(acc)
+                                accountsRestored++
                             }
-                            
-                            db.journalDao().insertPosting(
-                                com.projectkaka.inventory.data.local.entity.PostingEntity(
-                                    journalEntryId = journalEntryId,
-                                    accountId = targetCounterId,
-                                    amount = amount,
-                                    isCredit = !isCredit,
-                                    note = note
+                        }
+
+                        val catsArr = finObj.optJSONArray("categories")
+                        if (catsArr != null) {
+                            for (i in 0 until catsArr.length()) {
+                                val cObj = catsArr.getJSONObject(i)
+                                val id = cObj.optInt("id", 0)
+                                val cat = FinancialCategoryEntity(
+                                    id = if (id > 0) id else 0,
+                                    name = cObj.getString("name"),
+                                    type = CategoryType.valueOf(cObj.optString("type", "EXPENSE")),
+                                    aliases = cObj.optString("aliases", ""),
+                                    createdAt = cObj.optLong("createdAt", System.currentTimeMillis())
                                 )
-                            )
-                            transactionsRestored++
+                                db.financeDao().insertCategory(cat)
+                                categoriesRestored++
+                            }
                         }
-                    }
 
-                    val ledArr = finObj.optJSONArray("ledgerEntries")
-                    if (ledArr != null) {
-                        for (i in 0 until ledArr.length()) {
-                            val lObj = ledArr.getJSONObject(i)
-                            val id = lObj.optInt("id", 0)
-                            val le = LedgerEntryEntity(
-                                id = if (id > 0) id else 0,
-                                contactName = lObj.getString("contactName"),
-                                contactPhone = lObj.optString("contactPhone", ""),
-                                amount = parseMoney(lObj, "amount"),
-                                type = LedgerType.valueOf(lObj.optString("type", "PAYABLE")),
-                                isSettled = lObj.getBoolean("isSettled"),
-                                note = lObj.optString("note", ""),
-                                dueDate = if (lObj.isNull("dueDate")) null else lObj.getLong("dueDate"),
-                                accountId = if (lObj.isNull("accountId")) null else lObj.getInt("accountId"),
-                                linkedTransactionId = if (lObj.isNull("linkedTransactionId")) null else lObj.getInt("linkedTransactionId"),
-                                createdAt = lObj.optLong("createdAt", System.currentTimeMillis())
-                            )
-                            db.financeDao().insertLedgerEntry(le)
-                            ledgerEntriesRestored++
+                        val txsArr = finObj.optJSONArray("transactions")
+                        if (txsArr != null) {
+                            for (i in 0 until txsArr.length()) {
+                                val tObj = txsArr.getJSONObject(i)
+                                val id = tObj.optInt("id", 0)
+                                val amount = parseMoney(tObj, "amount")
+                                val accountId = tObj.getInt("accountId")
+                                val counterAccountIdRaw = if (tObj.isNull("counterAccountId")) null else tObj.getInt("counterAccountId")
+                                val isCredit = tObj.getBoolean("isCredit")
+                                val note = tObj.optString("note", "")
+                                val timestamp = tObj.optLong("timestamp", System.currentTimeMillis())
+                                val typeStr = tObj.optString("type", "EXPENSE")
+                                
+                                val journalEntryId = db.journalDao().insertJournalEntry(
+                                    com.projectkaka.inventory.data.local.entity.JournalEntryEntity(
+                                        id = if (id > 0) id else 0,
+                                        timestamp = timestamp,
+                                        description = note,
+                                        status = com.projectkaka.inventory.data.local.entity.JournalStatus.POSTED,
+                                        approvalStatus = com.projectkaka.inventory.data.local.entity.ApprovalStatus.APPROVED
+                                    )
+                                ).toInt()
+
+                                db.journalDao().insertPosting(
+                                    com.projectkaka.inventory.data.local.entity.PostingEntity(
+                                        journalEntryId = journalEntryId,
+                                        accountId = accountId,
+                                        amount = amount,
+                                        isCredit = isCredit,
+                                        note = note
+                                    )
+                                )
+
+                                val targetCounterId = if (counterAccountIdRaw != null) {
+                                    counterAccountIdRaw
+                                } else {
+                                    val accName = when (typeStr) {
+                                        "INCOME" -> "Income"
+                                        "DEBT_ISSUE", "DEBT_SETTLE" -> if (isCredit) "Liabilities" else "Assets"
+                                        else -> "Expenses"
+                                    }
+                                    val existingAcc = db.financeDao().getAccountByName(accName)
+                                    if (existingAcc != null) existingAcc.id
+                                    else {
+                                        val accType = when (typeStr) {
+                                            "INCOME" -> AccountType.REVENUE
+                                            "DEBT_ISSUE", "DEBT_SETTLE" -> if (isCredit) AccountType.LIABILITY else AccountType.ASSET
+                                            else -> AccountType.EXPENSE
+                                        }
+                                        db.financeDao().insertAccount(AccountEntity(name = accName, type = accType, openingBalance = com.projectkaka.inventory.model.Money.ZERO)).toInt()
+                                    }
+                                }
+                                
+                                db.journalDao().insertPosting(
+                                    com.projectkaka.inventory.data.local.entity.PostingEntity(
+                                        journalEntryId = journalEntryId,
+                                        accountId = targetCounterId,
+                                        amount = amount,
+                                        isCredit = !isCredit,
+                                        note = note
+                                    )
+                                )
+                                transactionsRestored++
+                            }
                         }
-                    }
 
-                    // Recalculate balances for all accounts after bulk import
-                    val allAccounts = db.financeDao().getAllAccountsSnapshot()
-                    allAccounts.forEach { account ->
-                        db.financeDao().recalculateAccountBalance(account.id)
+                        val ledArr = finObj.optJSONArray("ledgerEntries")
+                        if (ledArr != null) {
+                            for (i in 0 until ledArr.length()) {
+                                val lObj = ledArr.getJSONObject(i)
+                                val id = lObj.optInt("id", 0)
+                                val le = LedgerEntryEntity(
+                                    id = if (id > 0) id else 0,
+                                    contactName = lObj.getString("contactName"),
+                                    contactPhone = lObj.optString("contactPhone", ""),
+                                    amount = parseMoney(lObj, "amount"),
+                                    type = LedgerType.valueOf(lObj.optString("type", "PAYABLE")),
+                                    isSettled = lObj.getBoolean("isSettled"),
+                                    note = lObj.optString("note", ""),
+                                    dueDate = if (lObj.isNull("dueDate")) null else lObj.getLong("dueDate"),
+                                    accountId = if (lObj.isNull("accountId")) null else lObj.getInt("accountId"),
+                                    linkedTransactionId = if (lObj.isNull("linkedTransactionId")) null else lObj.getInt("linkedTransactionId"),
+                                    createdAt = lObj.optLong("createdAt", System.currentTimeMillis())
+                                )
+                                db.financeDao().insertLedgerEntry(le)
+                                ledgerEntriesRestored++
+                            }
+                        }
+
+                        // Recalculate balances for all accounts after bulk import
+                        val allAccounts = db.financeDao().getAllAccountsSnapshot()
+                        allAccounts.forEach { account ->
+                            db.financeDao().recalculateAccountBalance(account.id)
+                        }
+
+                        val mismatches = db.financeDao().getAccountsWithMismatchedBalances()
+                        if (mismatches.isNotEmpty()) {
+                            throw BalanceMismatchException("Balance mismatch detected in accounts: ${mismatches.joinToString { it.name }}")
+                        }
                     }
                 }
             }

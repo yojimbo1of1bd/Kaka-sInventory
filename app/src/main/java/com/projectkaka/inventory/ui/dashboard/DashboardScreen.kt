@@ -347,16 +347,25 @@ fun DashboardScreen(
                                 "৳${"%.2f".format(state.dailyBudget.minorUnits / 100.0)}/d",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                                color = if (state.deficitAmount.minorUnits > 0L) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                             )
-                            Text(
-                                " • Today: ৳${"%.2f".format(state.todaySpending.minorUnits / 100.0)}",
-                                fontSize = 12.sp,
-                                color = if (state.todaySpending > state.dailyBudget && state.dailyBudget.minorUnits > 0L) 
-                                    MaterialTheme.colorScheme.error 
-                                else 
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (state.deficitAmount.minorUnits > 0L) {
+                                Text(
+                                    " • Short: ৳${"%.2f".format(state.deficitAmount.minorUnits / 100.0)}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            } else {
+                                Text(
+                                    " • Today: ৳${"%.2f".format(state.todaySpending.minorUnits / 100.0)}",
+                                    fontSize = 12.sp,
+                                    color = if (state.todaySpending > state.dailyBudget && state.dailyBudget.minorUnits > 0L) 
+                                        MaterialTheme.colorScheme.error 
+                                    else 
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -417,14 +426,14 @@ fun DashboardScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text("Daily Budget", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                                Text("Safe to Spend", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                                 Text(
                                     "৳${"%.2f".format(state.dailyBudget.minorUnits / 100.0)} / day",
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.Black,
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = if (state.deficitAmount.minorUnits > 0L) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                                 )
-                                Text("${state.remainingDays} days left", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                                Text("${state.remainingDays} days until next income", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text("Today's Spend", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
@@ -438,7 +447,35 @@ fun DashboardScreen(
                                     fontWeight = FontWeight.Black,
                                     color = spendColor
                                 )
-                                Text("Visible Balance: ৳${"%.2f".format(state.totalCashBalance.minorUnits / 100.0)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                                Text(
+                                    if (state.deficitAmount.minorUnits > 0L) 
+                                        "Deficit: -৳${"%.2f".format(state.deficitAmount.minorUnits / 100.0)}" 
+                                    else 
+                                        "Safe Net: ৳${"%.2f".format(state.safeToSpendTotal.minorUnits / 100.0)}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (state.deficitAmount.minorUnits > 0L) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+
+                        if (state.totalPayables.minorUnits > 0L) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    "Liquid Cash: ৳${"%.2f".format(state.totalCashBalance.minorUnits / 100.0)}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    "Accrued Payables: -৳${"%.2f".format(state.totalPayables.minorUnits / 100.0)}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
                             }
                         }
 

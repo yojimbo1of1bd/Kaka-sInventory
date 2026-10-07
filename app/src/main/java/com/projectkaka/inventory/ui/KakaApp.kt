@@ -76,6 +76,7 @@ fun KakaApp() {
     val permMicrophone by preferences.permMicrophone.collectAsState()
     val permStorage by preferences.permStorage.collectAsState()
     val businessMode by preferences.businessMode.collectAsState()
+    val incomeCycleDay by preferences.incomeCycleDay.collectAsState()
     
     val isDark = when (themeMode) {
         ThemeMode.LIGHT -> false
@@ -181,6 +182,8 @@ fun KakaApp() {
                     onPermStorageChange = { preferences.setPermissionEnabled("perm_storage", it) },
                     businessMode = businessMode,
                     onBusinessModeChange = { preferences.setBusinessMode(it) },
+                    incomeCycleDay = incomeCycleDay,
+                    onIncomeCycleDayChange = { preferences.setIncomeCycleDay(it) },
                     onOpenAccounts = { navController.navigate(Routes.ACCOUNTS_MANAGER) },
                     onOpenEmergencyContact = { navController.navigate(Routes.EMERGENCY_CONTACT) },
                     onOpenExport = { navController.navigate(Routes.EXPORT) },

@@ -25,6 +25,7 @@ class KakaApplication : Application() {
             careTaskDao = database.careTaskDao(),
             financeRepository = financeRepository,
             basketDao = database.basketDao(),
+            preferences = preferences,
             ioDispatcher = Dispatchers.IO
         )
     }

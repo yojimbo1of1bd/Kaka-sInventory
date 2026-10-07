@@ -47,20 +47,37 @@ class AccountsManagerViewModel(application: Application) : AndroidViewModel(appl
         )
 
     fun createAccount(name: String, type: AccountType, initialBalanceStr: String, onResult: (Boolean, String) -> Unit) {
+        val trimmedName = name.trim()
+        if (trimmedName.isBlank()) {
+            onResult(false, "Account name cannot be empty.")
+            return
+        }
         viewModelScope.launch {
             val balance = try {
-                Money.fromDecimalString(initialBalanceStr)
+                Money.fromDecimalString(initialBalanceStr.ifBlank { "0.0" })
             } catch (e: Exception) {
                 onResult(false, "Invalid initial balance format.")
                 return@launch
             }
-            val acc = com.projectkaka.inventory.data.local.entity.AccountEntity(
-                name = name.trim().replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() },
-                type = type,
-                openingBalance = balance
-            )
-            financeRepo.insertAccount(acc)
-            onResult(true, "Account created successfully.")
+            val formattedName = trimmedName.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }
+            
+            try {
+                val existing = financeRepo.resolveAccountsExact(formattedName)
+                if (existing.isNotEmpty()) {
+                    onResult(false, "An account named '$formattedName' already exists.")
+                    return@launch
+                }
+                val acc = com.projectkaka.inventory.data.local.entity.AccountEntity(
+                    name = formattedName,
+                    type = type,
+                    openingBalance = balance
+                )
+                financeRepo.insertAccount(acc)
+                onResult(true, "Account '$formattedName' created successfully.")
+            } catch (e: Exception) {
+                android.util.Log.e("AccountsManager", "Error creating account", e)
+                onResult(false, e.message ?: "Failed to create account.")
+            }
         }
     }
 
@@ -87,6 +104,38 @@ class AccountsManagerViewModel(application: Application) : AndroidViewModel(appl
             }
             financeRepo.deleteAccount(awc.account)
             onResult(true, "Account deleted successfully.")
+        }
+    }
+
+    fun updateAccount(accountId: Int, newName: String, newType: AccountType, newOpeningBalanceStr: String, onResult: (Boolean, String) -> Unit) {
+        val trimmedName = newName.trim()
+        if (trimmedName.isBlank()) {
+            onResult(false, "Account name cannot be empty.")
+            return
+        }
+        viewModelScope.launch {
+            val balance = try {
+                Money.fromDecimalString(newOpeningBalanceStr.ifBlank { "0.0" })
+            } catch (e: Exception) {
+                onResult(false, "Invalid balance format.")
+                return@launch
+            }
+            val account = uiState.value.accountsWithCounts.find { it.account.id == accountId }?.account
+            if (account == null) {
+                onResult(false, "Account not found.")
+                return@launch
+            }
+            val formattedName = trimmedName.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() }
+            if (!formattedName.equals(account.name, ignoreCase = true)) {
+                val existing = financeRepo.resolveAccountsExact(formattedName)
+                if (existing.isNotEmpty()) {
+                    onResult(false, "An account named '$formattedName' already exists.")
+                    return@launch
+                }
+            }
+            val updated = account.copy(name = formattedName, type = newType, openingBalance = balance)
+            financeRepo.updateAccount(updated)
+            onResult(true, "Account updated successfully.")
         }
     }
 

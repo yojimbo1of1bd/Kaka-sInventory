@@ -85,10 +85,10 @@ fun ExportScreen(
             AlertDialog(
                 onDismissRequest = { pendingImportUri = null },
                 title = { Text("Confirm Import") },
-                text = { Text("Importing this backup will overwrite and replace ALL existing data in the app. This action cannot be undone. Do you want to proceed?") },
+                text = { Text("Importing this backup will overwrite and replace existing data in the app. This action cannot be undone. Do you want to proceed?") },
                 confirmButton = {
                     TextButton(onClick = {
-                        pendingImportUri?.let { viewModel.importKakaZip(it) }
+                        pendingImportUri?.let { viewModel.checkAndImportKakaZip(it) }
                         pendingImportUri = null
                     }) {
                         Text("Import & Replace", color = MaterialTheme.colorScheme.error)
@@ -96,6 +96,38 @@ fun ExportScreen(
                 },
                 dismissButton = {
                     TextButton(onClick = { pendingImportUri = null }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        val mismatchDialog = state.balanceMismatchDialog
+        if (mismatchDialog != null) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissMismatchDialog() },
+                title = { Text("Balance Mismatch Detected", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        Text(
+                            "The financial records in this backup contain balance discrepancies or conflicts:\n• ${mismatchDialog.reason}",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Are you willing to update your inventory (${mismatchDialog.itemCount} item(s), ${mismatchDialog.docCount} document(s)) and remaining image files from the zip, while declining the financial & liability ledger import?"
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.importKakaZip(mismatchDialog.uri, skipFinance = true)
+                    }) {
+                        Text("Update Inventory Only", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissMismatchDialog() }) {
                         Text("Cancel")
                     }
                 }

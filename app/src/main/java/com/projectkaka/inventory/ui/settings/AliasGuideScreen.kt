@@ -1,6 +1,7 @@
 package com.projectkaka.inventory.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -19,6 +20,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -83,7 +86,9 @@ fun AliasGuideScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showManual by remember { mutableStateOf(false) }
     var terminalInput by remember { mutableStateOf("") }
+    var historyIndex by remember { androidx.compose.runtime.mutableIntStateOf(-1) }
     val terminalLogs = state.terminalLogs
+    val historyList = remember(terminalLogs.size) { viewModel.getCommandHistory() }
     val listState = rememberLazyListState()
 
     // Auto-scroll to bottom
@@ -96,6 +101,7 @@ fun AliasGuideScreen(
     fun executeCommand(input: String) {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return
+        historyIndex = -1
         
         viewModel.executeTerminalCommand(trimmed) { action ->
             when (action) {
@@ -140,12 +146,36 @@ fun AliasGuideScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 )
                 
-                OutlinedButton(
-                    onClick = { showManual = true },
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(8.dp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Open Terminal Manual", color = Color(0xFF58A6FF))
+                    OutlinedButton(
+                        onClick = { showManual = true },
+                        modifier = Modifier.weight(1.2f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF58A6FF))
+                    ) {
+                        Text("📖 Manual", fontSize = 12.sp, maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = { executeCommand("help/ ?") },
+                        modifier = Modifier.weight(1.3f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF39D353))
+                    ) {
+                        Text("⚖️ help/ ?", fontSize = 12.sp, maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = { executeCommand("/help") },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFFBD2E))
+                    ) {
+                        Text("❓ /help", fontSize = 12.sp, maxLines = 1)
+                    }
                 }
 
                 Spacer(Modifier.height(8.dp))
@@ -246,6 +276,43 @@ fun AliasGuideScreen(
                     )
                     IconButton(
                         onClick = {
+                            if (historyList.isNotEmpty()) {
+                                if (historyIndex == -1) {
+                                    historyIndex = historyList.size - 1
+                                } else if (historyIndex > 0) {
+                                    historyIndex--
+                                }
+                                terminalInput = historyList.getOrElse(historyIndex) { "" }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Previous Command",
+                            tint = Color(0xFF8A8A8A)
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            if (historyList.isNotEmpty() && historyIndex != -1) {
+                                if (historyIndex < historyList.size - 1) {
+                                    historyIndex++
+                                    terminalInput = historyList.getOrElse(historyIndex) { "" }
+                                } else {
+                                    historyIndex = -1
+                                    terminalInput = ""
+                                }
+                            }
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Next Command",
+                            tint = Color(0xFF8A8A8A)
+                        )
+                    }
+                    IconButton(
+                        onClick = {
                             if (terminalInput.isNotBlank()) {
                                 executeCommand(terminalInput)
                                 terminalInput = ""
@@ -294,24 +361,28 @@ fun AliasGuideScreen(
                         Text("Go to Drafts to categorize your items. Items in Drafts have red borders in the grid.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
                         Spacer(Modifier.height(8.dp))
 
-                        Text("3. Financial Commands (f/)", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
-                        Text("Use the search bar with 'f/ [amount] [account] [category]' to log money. Example: 'f/ -150 bkash lunch'", fontSize = 14.sp, color = Color(0xFF8A8A8A))
+                        Text("3. Double-Entry Accounting (f/)", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
+                        Text("Strict double-entry bookkeeping: Always DEBIT first, then CREDIT. Syntax: 'f/ <amount> <debit> <credit> [\"notes\"] [@date]'. Example expense: 'f/ -120 exp bkash \"For lunch\"'. Example income: 'f/ +5050 bkash salary \"Father sent money\"'.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
                         Spacer(Modifier.height(8.dp))
 
-                        Text("4. Action Commands (kaka)", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
-                        Text("Type 'kaka show graph' for analytics, 'kaka show alias' for financial shortcuts, and 'kaka ledger' for debts.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
+                        Text("4. Linux Man Pages & Accounting Handbook", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
+                        Text("Type 'help/ ?' or 'man ?' to read the Debits & Credits Handbook. Type 'man <cmd>' (e.g. 'man f/', 'man log/', 'man settle/') for complete manual pages with real-world tradeoffs and examples.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
+                        Spacer(Modifier.height(8.dp))
+
+                        Text("5. Financial Tradeoffs Audit Log (log/)", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
+                        Text("Audit financial tradeoffs and command origins over any time period. Examples: 'log/ august', 'log/ today', 'log/ 2026-10-07 10:00-18:00', 'log/ all'.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
+                        Spacer(Modifier.height(8.dp))
+
+                        Text("6. Action Commands (kaka)", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
+                        Text("Type 'kaka show graph' for analytics, 'kaka show alias' for this manual, and 'kaka ledger' for debts.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
                         Spacer(Modifier.height(8.dp))
                         
-                        Text("5. Maintenance (Red Ring)", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
+                        Text("7. Maintenance (Red Ring)", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
                         Text("Long press an item to set recurring care tasks. The Profile Icon gets a Red Ring when tasks are due.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
                         Spacer(Modifier.height(8.dp))
                         
-                        Text("6. Alerts", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
-                        Text("Configure alert recipients in Settings. When overspending is detected (3 strikes), an emergency message is sent.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
-                        Spacer(Modifier.height(8.dp))
-                        
-                        Text("7. Voice Input", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
-                        Text("Tap the microphone icon in the Ledger note field to dictate entries in English.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
+                        Text("8. Cryptographic Baseline & Integrity", fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
+                        Text("Use 'snapshot/ create' to build a cryptographic baseline, and 'snapshot/ verify' or 'verify/ images' to audit local files against corruption.", fontSize = 14.sp, color = Color(0xFF8A8A8A))
                         
                         Spacer(Modifier.height(24.dp))
                         
@@ -323,39 +394,69 @@ fun AliasGuideScreen(
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
 
-                        SectionHeader("Financial Quick-Entry")
-                        CommandRow("f/ -500 cash food", "Log ৳500 expense from Cash → Food")
-                        CommandRow("f/ +200 bkash salary", "Log ৳200 income to bKash → Salary")
-                        CommandRow("credit/ 500 bkash salary", "Shorthand for f/ +500 bkash salary")
-                        CommandRow("debit/ 300 cash food", "Shorthand for f/ -300 cash food")
+                        SectionHeader("Manuals & Accounting Handbook")
+                        CommandRow("help/ ?", "Open Debits & Credits Handbook (A + E = L + Eq + R)")
+                        CommandRow("man f/", "Detailed man page for double-entry financial commands")
+                        CommandRow("man settle/", "Detailed man page for FIFO debt settlements")
+                        CommandRow("man log/", "Detailed man page for tradeoff audit logging")
+                        CommandRow("man snapshot/", "Detailed man page for cryptographic baseline integrity")
+                        CommandRow("man due/", "Detailed man page for receivables and payables")
+                        CommandRow("man kaka", "Detailed man page for terminal UI action shortcuts")
 
                         Spacer(Modifier.height(16.dp))
 
-                        SectionHeader("Double-Entry & Accruals")
+                        SectionHeader("Financial Double-Entry Entries (DR first, CR second)")
+                        CommandRow("f/ -120 exp bkash \"lunch\"", "Debit Expenses (+120), Credit bKash (-120)")
+                        CommandRow("f/ +5050 bkash salary \"Aug\"", "Debit bKash (+5050), Credit Salary Revenue (+5050)")
+                        CommandRow("bal/ bkash", "Check current balance of bKash account")
+                        CommandRow("bal/ all", "View balances across all active accounts")
+
+                        Spacer(Modifier.height(16.dp))
+
+                        SectionHeader("Tradeoff Audit Logging")
+                        CommandRow("log/ august", "Audit double-entry tradeoffs for month of August")
+                        CommandRow("log/ today", "View all financial tradeoffs logged today")
+                        CommandRow("log/ 2026-10-07 10:00-18:00", "Filter tradeoffs by specific date and time window")
+                        CommandRow("log/ all", "View complete historical tradeoffs audit log")
+
+                        Spacer(Modifier.height(16.dp))
+
+                        SectionHeader("Transfers & Cash Out")
                         CommandRow("xfer/ 1000 cash bkash", "Transfer ৳1000 from Cash to bKash")
-                        CommandRow("accrue/ 500 ar sales", "Accrue ৳500 Accounts Receivable to Sales")
-                        CommandRow("realize/ 500 cash ar", "Realize ৳500 Cash from Accounts Receivable")
-                        CommandRow("due/ in 500 rahim payable", "Log a ৳500 debt you owe Rahim")
-                        CommandRow("settle/ rahim 500", "Settle ৳500 of debt with Rahim")
-                        CommandRow("bal/ cash", "Check the balance of Cash account")
+                        CommandRow("charge/ bkash *1.85%", "Configure cashout charge rate for bKash")
+                        CommandRow("charge/ all", "View all configured cashout charge rates")
+                        CommandRow("cashout/ 1000 bkash", "Cash out ৳1000 from bKash to Cash with charge")
 
                         Spacer(Modifier.height(16.dp))
 
-                        SectionHeader("Account Management")
-                        CommandRow("init/ bkash 5000", "Set bKash balance to ৳5000")
-                        CommandRow("alter/ bkash bKash Mobile", "Rename bkash to 'bKash Mobile'")
-                        CommandRow("delete/ oldaccount", "Delete an account")
+                        SectionHeader("Debt & Liability Ledger (FIFO Settlements)")
+                        CommandRow("due/ out 500 \"babul mama\" grocery", "Log ৳500 payable (you owe Babul Mama)")
+                        CommandRow("due/ in 1200 \"karim\" loan", "Log ৳1200 receivable (Karim owes you)")
+                        CommandRow("settle/ \"babul mama\" cash", "Settle all open debts with Babul Mama (FIFO)")
+                        CommandRow("settle/ \"babul mama\" 500 cash", "Settle debts up to ৳500, calculate change/split")
+                        CommandRow("kaka ledger", "Open the full Debt & Liability ledger")
 
                         Spacer(Modifier.height(16.dp))
 
-                        SectionHeader("Navigation")
-                        CommandRow("kaka show graph", "Open analytics / balance trajectory")
-                        CommandRow("kaka ledger", "Open the Debt & Liability ledger")
-                        CommandRow("kaka show alias", "Open this terminal manual")
-                        CommandRow("report/ bs", "View Balance Sheet")
-                        CommandRow("report/ pnl", "View Income Statement")
-                        CommandRow("kaka export", "Open export screen")
-                        CommandRow("/help", "Show this command reference")
+                        SectionHeader("Account & System Management")
+                        CommandRow("init/ bkash 5000", "Initialize or create bKash with ৳5000 opening balance")
+                        CommandRow("account/ add Bank cash 10000", "Create new account with type and balance")
+                        CommandRow("account/ type bkash cash", "Change or fix account type (CASH, LIABILITY, etc.)")
+                        CommandRow("account/ archive bkash", "Archive an account without losing history")
+                        CommandRow("alter/ bkash type cash", "Change account classification")
+                        CommandRow("alter/ bkash rename bKash Mobile", "Rename account")
+                        CommandRow("snapshot/ create", "Create SHA-256 cryptographic baseline snapshot (alias: snapshot/ take)")
+                        CommandRow("snapshot/ verify", "Verify all images against baseline checksums (alias: snapshot/ check)")
+                        CommandRow("history/ 20", "View recent terminal command history")
+
+                        Spacer(Modifier.height(16.dp))
+
+                        SectionHeader("Financial Statements & Reports")
+                        CommandRow("report/ bs", "Generate complete Balance Sheet (A = L + E)")
+                        CommandRow("report/ pnl", "Generate Net Income Statement (Revenue - Expenses)")
+                        CommandRow("kaka show graph", "Open analytics graph and trajectory")
+                        CommandRow("kaka export", "Open backup export & restore screen")
+                        CommandRow("/help", "Quick command syntax guide")
 
                         Spacer(Modifier.height(24.dp))
 

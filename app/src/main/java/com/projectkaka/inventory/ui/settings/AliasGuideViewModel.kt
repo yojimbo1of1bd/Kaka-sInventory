@@ -29,20 +29,23 @@ data class AliasGuideUiState(
     val isLoading: Boolean = true,
     val terminalLogs: List<TerminalLog> = listOf(
         TerminalLog("Welcome to kaka terminal v1.0", LogType.SUCCESS, isBold = true),
-        TerminalLog("Type /help for available commands.", LogType.INFO)
+        TerminalLog("Type /help for syntax, or 'help/ ?' / 'man ?' for Debits & Credits Handbook.", LogType.INFO),
+        TerminalLog("Type 'kaka show alias' or tap [Terminal Manual] above to open the full guide.", LogType.HINT)
     )
 )
 
 class AliasGuideViewModel(application: Application) : AndroidViewModel(application) {
     private val financeRepo = getApplication<KakaApplication>().financeRepository
     private val prefs = getApplication<KakaApplication>().preferences
+    private val terminalExecutor by lazy { com.projectkaka.inventory.search.TerminalExecutor(financeRepo, getApplication(), prefs) }
 
-    private val terminalExecutor by lazy { com.projectkaka.inventory.search.TerminalExecutor(financeRepo) }
+    fun getCommandHistory(): List<String> = prefs.getCommandHistory()
 
     private val _terminalLogs = kotlinx.coroutines.flow.MutableStateFlow<List<TerminalLog>>(
         listOf(
             TerminalLog("Welcome to kaka terminal v1.0", LogType.SUCCESS, isBold = true),
-            TerminalLog("Type /help for available commands.", LogType.INFO)
+            TerminalLog("Type /help for syntax, or 'help/ ?' / 'man ?' for Debits & Credits Handbook.", LogType.INFO),
+            TerminalLog("Type 'kaka show alias' or tap [Terminal Manual] above to open the full guide.", LogType.HINT)
         )
     )
 
@@ -79,10 +82,12 @@ class AliasGuideViewModel(application: Application) : AndroidViewModel(applicati
             val result = terminalExecutor.execute(trimmed)
             when (result) {
                 is com.projectkaka.inventory.search.TerminalResult.Success -> {
-                    appendLog(TerminalLog("✓ ${result.message}", LogType.SUCCESS))
+                    val clean = result.message.trimStart('✓', ' ')
+                    appendLog(TerminalLog("✓ $clean", LogType.SUCCESS))
                 }
                 is com.projectkaka.inventory.search.TerminalResult.Failure -> {
-                    appendLog(TerminalLog("✗ ${result.reason}", LogType.ERROR))
+                    val clean = result.reason.trimStart('✗', ' ')
+                    appendLog(TerminalLog("✗ $clean", LogType.ERROR))
                     if (result.hint != null) {
                         appendLog(TerminalLog("  Hint: ${result.hint}", LogType.HINT))
                     }
@@ -97,7 +102,8 @@ class AliasGuideViewModel(application: Application) : AndroidViewModel(applicati
                     // Do nothing
                 }
                 is com.projectkaka.inventory.search.TerminalResult.PendingAction -> {
-                    appendLog(TerminalLog("→ Action requested: ${result.action}", LogType.WARNING))
+                    val msg = if (result.action == "alias") "Opening Terminal Manual..." else "Action requested: ${result.action}"
+                    appendLog(TerminalLog("→ $msg", LogType.INFO))
                     onActionRequested(result.action)
                 }
             }

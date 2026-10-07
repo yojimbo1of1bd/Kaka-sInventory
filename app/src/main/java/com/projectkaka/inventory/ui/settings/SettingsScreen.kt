@@ -56,6 +56,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.projectkaka.inventory.data.settings.ThemeMode
+import com.projectkaka.inventory.util.ImageIntegrityManager
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -88,11 +89,16 @@ fun SettingsScreen(
     onPermStorageChange: (Boolean) -> Unit,
     businessMode: Boolean,
     onBusinessModeChange: (Boolean) -> Unit,
+    incomeCycleDay: Int = 1,
+    onIncomeCycleDayChange: (Int) -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var showGuide by remember { mutableStateOf(false) }
     var showPinDialog by remember { mutableStateOf(false) }
+    var showAuditDialog by remember { mutableStateOf(false) }
+    var auditResult by remember { mutableStateOf<ImageIntegrityManager.ImageAuditResult?>(null) }
 
     Column(
         modifier = modifier
@@ -199,6 +205,42 @@ fun SettingsScreen(
                     }
                 )
             }
+
+            if (showAuditDialog && auditResult != null) {
+                val res = auditResult!!
+                AlertDialog(
+                    onDismissRequest = { showAuditDialog = false },
+                    title = {
+                        Text(
+                            text = if (res.alteredFiles.isEmpty()) "Audit Passed" else "Integrity Warning",
+                            color = if (res.alteredFiles.isEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    text = {
+                        Column {
+                            Text(
+                                text = "Total files scanned: ${res.totalScanned}\nCryptographically verified: ${res.intactCount}\nAltered/Corrupted: ${res.alteredFiles.size}",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (res.alteredFiles.isNotEmpty()) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = "Altered files:\n" + res.alteredFiles.joinToString("\n") { it.fileName },
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showAuditDialog = false }) {
+                            Text("OK")
+                        }
+                    }
+                )
+            }
             
             Spacer(Modifier.height(24.dp))
             
@@ -214,6 +256,59 @@ fun SettingsScreen(
             SectionHeader("Accounts Management", "Set initial balances and configure aliases.")
             OutlinedButton(onClick = onOpenAccounts, modifier = Modifier.padding(top = 8.dp)) {
                 Text("Manage Accounts")
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── Income Cycle & Safe-to-Spend ──
+            SectionHeader("Income Cycle & Budget", "Recurring day of the month when your salary or allowance arrives, used for safe-to-spend accrual calculation.")
+            Spacer(Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Income Cycle Day",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Day $incomeCycleDay of each month",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = { if (incomeCycleDay > 1) onIncomeCycleDayChange(incomeCycleDay - 1) },
+                            enabled = incomeCycleDay > 1
+                        ) {
+                            Text("-", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Text(
+                            text = "$incomeCycleDay",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        IconButton(
+                            onClick = { if (incomeCycleDay < 31) onIncomeCycleDayChange(incomeCycleDay + 1) },
+                            enabled = incomeCycleDay < 31
+                        ) {
+                            Text("+", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(24.dp))
@@ -242,6 +337,54 @@ fun SettingsScreen(
             SectionHeader("Backup & Export", "Export your data to CSV or JSON. Import from backup files.")
             OutlinedButton(onClick = onOpenExport, modifier = Modifier.padding(top = 8.dp)) {
                 Text("Export / Import Data")
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── Cryptographic Integrity & Snapshot Audit ──
+            SectionHeader("Cryptographic Integrity & Baseline", "Create SHA-256 baseline snapshots and audit item images & documents against corruption or tampering.")
+            Spacer(Modifier.height(8.dp))
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "File Integrity & Tamper Protection",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Compute SHA-256 hashes of all local photos and documents to detect silent storage corruption or unauthorized modifications.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val count = ImageIntegrityManager.createBaselineSnapshot(context)
+                                Toast.makeText(context, "Baseline snapshot created for $count files.", Toast.LENGTH_LONG).show()
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Create Snapshot", fontSize = 12.sp)
+                        }
+                        Button(
+                            onClick = {
+                                auditResult = ImageIntegrityManager.verifyAllImages(context)
+                                showAuditDialog = true
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Verify Audit", fontSize = 12.sp)
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(24.dp))

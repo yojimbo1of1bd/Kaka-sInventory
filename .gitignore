@@ -1,65 +1,112 @@
-# Built application files
+# ==============================================================================
+# PROJECT KAKA - PRODUCTION ANDROID .GITIGNORE
+# ==============================================================================
+
+# ── 1. Built Application Binaries & Packages ──────────────────────────────────
 *.apk
-*.aar
 *.ap_
 *.aab
 *.dex
+*.aar
+app-debug.apk
+app-release.apk
+app-release-unsigned.apk
 
-# Files for the ART/Dalvik VM
+# ── 2. Java / Kotlin Compiled Outputs ─────────────────────────────────────────
 *.class
+bin/
 
-# Java / Gradle build outputs
+# ── 3. Gradle & Project Build Outputs ─────────────────────────────────────────
 build/
+**/build/
 app/build/
 .gradle/
 .kotlin/
+.incremental/
 
-# Local configuration file (sdk path, etc)
+# ── 4. Standalone Gradle Distributions & Archives ────────────────────────────
+# Never commit full downloaded Gradle distributions or wrapper zip caches
+gradle-*.zip
+gradle-*/
+!gradle/wrapper/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# ── 5. Local Machine SDK & Machine-Specific Config ────────────────────────────
+# Contains absolute local SDK paths (e.g., C:\Users\...\Android\Sdk)
 local.properties
 
-# Android Studio / IntelliJ IDEA
+# ── 6. Android Studio & IntelliJ IDEA Workspace ───────────────────────────────
 .idea/
 *.iml
 *.iws
 *.ipr
 out/
 
-# Android Studio Navigation editor temp files
+# Android Studio Navigation editor & layout temporary files
 .navigation/
 
-# Log files
+# ── 7. Logs, Memory Dumps & Profiler Traces ───────────────────────────────────
 *.log
-
-# Android Profiling & Captures
+*.log.*
 captures/
 profiler-*.trace
+*.hprof
 
-# Keystore files & signing keys
+# ── 8. Keystores, Signing Keys & Private Credentials ──────────────────────────
+# CRITICAL: Never commit private release/debug keystores or credentials
 *.jks
 *.keystore
 signing.properties
+release.keystore
+debug.keystore
 
-# Google Services & secrets
+# ── 9. Cloud Secrets & Google Services ────────────────────────────────────────
 google-services.json
+secrets.properties
 
-# C++ / NDK native build outputs
+# ── 10. Native C/C++ NDK Builds ───────────────────────────────────────────────
 .externalNativeBuild/
 .cxx/
 
-# OS generated files
+# ── 11. Test & Lint Reports ───────────────────────────────────────────────────
+lint/
+**/reports/
+**/test-results/
+
+# ── 12. Agentic IDE State & Temporary Workspaces ─────────────────────────────
+.agents/
+.system_generated/
+
+# ── 13. Archives & Temporary Swap Files ───────────────────────────────────────
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.bak
+*.swp
+*~
+
+# ── 14. OS-Generated Metadata & Cache Files ───────────────────────────────────
+# Windows
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# macOS
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
-ehthumbs.db
-Thumbs.db
-desktop.ini
 
-# VS Code
-.vscode/
-
-# Backup and swap files
-*.bak
-*.swp
+# Linux
 *~
+.directory
+
+# ── 15. VS Code & Alternative Editors ─────────────────────────────────────────
+.vscode/
+.history/

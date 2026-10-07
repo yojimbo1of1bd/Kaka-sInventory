@@ -18,6 +18,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.projectkaka.inventory.data.local.entity.AccountType
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,8 +29,10 @@ fun AccountsManagerScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var editAccountId by remember { mutableStateOf<Int?>(null) }
-    var editAccountAlias by remember { mutableStateOf<String?>(null) }
+    var editAccountName by remember { mutableStateOf("") }
+    var editAccountType by remember { mutableStateOf(AccountType.CASH) }
     var editAmount by remember { mutableStateOf("") }
+    var editTypeExpanded by remember { mutableStateOf(false) }
     
     var showAddDialog by remember { mutableStateOf(false) }
     var newAccountName by remember { mutableStateOf("") }
@@ -101,10 +104,11 @@ fun AccountsManagerScreen(
                         ) {
                             TextButton(onClick = { 
                                 editAccountId = account.id
-                                editAccountAlias = account.name
+                                editAccountName = account.name
+                                editAccountType = account.type
                                 editAmount = account.openingBalance.toString()
                             }) {
-                                Text("Edit Bal")
+                                Text("Edit")
                             }
                             TextButton(onClick = { 
                                 viewModel.archiveAccount(account.id, account.isActive)
@@ -131,19 +135,73 @@ fun AccountsManagerScreen(
     if (editAccountId != null) {
         AlertDialog(
             onDismissRequest = { editAccountId = null },
-            title = { Text("Set Opening Balance for ${editAccountAlias}") },
+            title = { Text("Edit Account: $editAccountName") },
             text = {
-                OutlinedTextField(
-                    value = editAmount,
-                    onValueChange = { editAmount = it },
-                    label = { Text("New Opening Balance") },
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editAccountName,
+                        onValueChange = { editAccountName = it },
+                        label = { Text("Account Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = editAccountType.name,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Account Type") },
+                            trailingIcon = {
+                                IconButton(onClick = { editTypeExpanded = true }) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Type")
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        DropdownMenu(
+                            expanded = editTypeExpanded,
+                            onDismissRequest = { editTypeExpanded = false }
+                        ) {
+                            AccountType.entries.forEach { type ->
+                                DropdownMenuItem(
+                                    text = { 
+                                        Column {
+                                            Text(type.name, fontWeight = FontWeight.Bold)
+                                            val desc = when (type) {
+                                                AccountType.CASH -> "Liquid funds (Cash, bKash, Nagad), budget active."
+                                                AccountType.ASSET -> "Physical assets/property."
+                                                AccountType.LIABILITY -> "Debts/Loans."
+                                                AccountType.CAPITAL -> "Owner equity/Capital."
+                                                AccountType.REVENUE -> "Sales / Income."
+                                                AccountType.EXPENSE -> "Operating Expenses."
+                                            }
+                                            Text(desc, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                        }
+                                    },
+                                    onClick = {
+                                        editAccountType = type
+                                        editTypeExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = editAmount,
+                        onValueChange = { editAmount = it },
+                        label = { Text("Opening Balance") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (editAmount.isNotBlank()) {
-                        viewModel.updateOpeningBalance(editAccountId!!, editAmount) { success, msg ->
+                    if (editAccountName.isNotBlank() && editAmount.isNotBlank()) {
+                        viewModel.updateAccount(editAccountId!!, editAccountName, editAccountType, editAmount) { success, msg ->
                             showMessageDialog = msg
                         }
                     }

@@ -22,6 +22,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -105,8 +108,48 @@ fun TriageSheet(
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            
+            if (dueTasks.isNotEmpty()) {
+                val context = LocalContext.current
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            dueTasks.forEach { due ->
+                                com.projectkaka.inventory.util.CareReminderManager.pushToCalendar(
+                                    context,
+                                    due.itemName,
+                                    due.task.taskName,
+                                    due.task.frequencyDays
+                                )
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Calendar All", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            dueTasks.forEach { due ->
+                                com.projectkaka.inventory.util.CareReminderManager.postDueNotification(
+                                    context,
+                                    due.task.id,
+                                    due.itemName,
+                                    due.task.taskName,
+                                    due.daysOverdue
+                                )
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Notify All", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
             val context = LocalContext.current
             Button(
                 onClick = {
@@ -131,6 +174,7 @@ fun TriageSheet(
 
 @Composable
 private fun DueTaskRow(due: DueTask, onComplete: () -> Unit) {
+    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -170,6 +214,59 @@ private fun DueTaskRow(due: DueTask, onComplete: () -> Unit) {
                 color = Color(0xFFE74C3C),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold
+            )
+        }
+
+        androidx.compose.material3.IconButton(
+            onClick = {
+                com.projectkaka.inventory.util.CareReminderManager.pushToCalendar(
+                    context,
+                    due.itemName,
+                    due.task.taskName,
+                    due.task.frequencyDays
+                )
+            }
+        ) {
+            Icon(
+                Icons.Default.DateRange,
+                contentDescription = "Push to Calendar",
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        androidx.compose.material3.IconButton(
+            onClick = {
+                com.projectkaka.inventory.util.CareReminderManager.setAlarm(
+                    context,
+                    due.itemName,
+                    due.task.taskName,
+                    9,
+                    0
+                )
+            }
+        ) {
+            Icon(
+                Icons.Default.Alarm,
+                contentDescription = "Set Alarm",
+                tint = MaterialTheme.colorScheme.secondary
+            )
+        }
+
+        androidx.compose.material3.IconButton(
+            onClick = {
+                com.projectkaka.inventory.util.CareReminderManager.postDueNotification(
+                    context,
+                    due.task.id,
+                    due.itemName,
+                    due.task.taskName,
+                    due.daysOverdue
+                )
+            }
+        ) {
+            Icon(
+                Icons.Default.Notifications,
+                contentDescription = "Post Notification",
+                tint = MaterialTheme.colorScheme.tertiary
             )
         }
 

@@ -43,6 +43,9 @@ data class DashboardUiState(
     // ── Financial ──
     val dailyBudget: Money = Money(0),
     val totalCashBalance: Money = Money(0),
+    val totalPayables: Money = Money(0),
+    val safeToSpendTotal: Money = Money(0),
+    val deficitAmount: Money = Money(0),
     val remainingDays: Int = 0,
     val todaySpending: Money = Money(0),
     
@@ -67,9 +70,12 @@ private data class ListState(
 
 data class BudgetState(
     val totalCashBalance: Money,
+    val totalPayables: Money,
+    val safeToSpendTotal: Money,
     val dailyBudget: Money,
     val remainingDays: Int,
-    val todaySpending: Money
+    val todaySpending: Money,
+    val deficitAmount: Money = Money(0)
 )
 
 private data class QuickLogState(
@@ -172,7 +178,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     ) { cleared, cash -> cleared to cash }
 
     // ════════════════════════════════════════════════════════════════════
-    //  Budget: total CASH balance / remaining days in month
+    //  Budget: (total CASH balance - unsettled payables) / cycle days
     // ════════════════════════════════════════════════════════════════════
 
     private val budgetState: StateFlow<BudgetState> = run {
@@ -180,18 +186,26 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         val today = LocalDate.now()
         val dayStartMs = today.atStartOfDay(zone).toInstant().toEpochMilli()
         val dayEndMs = today.atTime(LocalTime.MAX).atZone(zone).toInstant().toEpochMilli()
-        val monthStartMs = today.withDayOfMonth(1).atStartOfDay(zone).toInstant().toEpochMilli()
 
         combine(
             financeRepo.observeAllAccountBalances(),
+            financeRepo.observeTotalPayable(),
             financeRepo.observeDaySpending(dayStartMs, dayEndMs),
-            prefs.hiddenAccountIds
-        ) { accounts, todaySpend, hiddenIds ->
-            computeBudgetState(accounts, todaySpend, hiddenIds, today)
+            prefs.hiddenAccountIds,
+            prefs.incomeCycleDay
+        ) { accounts, payables, todaySpend, hiddenIds, cycleDay ->
+            computeBudgetState(
+                accounts = accounts,
+                todaySpend = todaySpend,
+                hiddenIds = hiddenIds,
+                today = today,
+                totalPayables = payables,
+                incomeCycleDay = cycleDay
+            )
         }.stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5_000),
-            BudgetState(Money(0), Money(0), 0, Money(0))
+            BudgetState(Money(0), Money(0), Money(0), Money(0), 0, Money(0), Money(0))
         )
     }
 
@@ -259,6 +273,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 cashRecovered = stats.second,
                 dailyBudget = budget.dailyBudget,
                 totalCashBalance = budget.totalCashBalance,
+                totalPayables = budget.totalPayables,
+                safeToSpendTotal = budget.safeToSpendTotal,
+                deficitAmount = budget.deficitAmount,
                 remainingDays = budget.remainingDays,
                 todaySpending = budget.todaySpending,
                 showQuickLog = ql.showQuickLog,
@@ -288,7 +305,7 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private val terminalExecutor by lazy {
-        com.projectkaka.inventory.search.TerminalExecutor(financeRepo)
+        com.projectkaka.inventory.search.TerminalExecutor(financeRepo, getApplication(), prefs)
     }
 
     fun executeTerminalCommand(input: String, onResult: (String) -> Unit) {
@@ -332,17 +349,61 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     companion object {
+        fun calculateDaysUntilNextIncome(today: java.time.LocalDate, incomeCycleDay: Int = 1): Int {
+            val day = incomeCycleDay.coerceIn(1, 31)
+            val currentMonthTargetDay = minOf(day, today.lengthOfMonth())
+            val nextIncomeDate = if (today.dayOfMonth < currentMonthTargetDay) {
+                today.withDayOfMonth(currentMonthTargetDay)
+            } else {
+                val nextMonth = today.plusMonths(1)
+                val nextMonthTargetDay = minOf(day, nextMonth.lengthOfMonth())
+                nextMonth.withDayOfMonth(nextMonthTargetDay)
+            }
+            val days = java.time.temporal.ChronoUnit.DAYS.between(today, nextIncomeDate).toInt()
+            return maxOf(1, days)
+        }
+
         fun computeBudgetState(
             accounts: List<com.projectkaka.inventory.data.local.entity.AccountEntity>,
             todaySpend: Money,
             hiddenIds: Set<Int>,
-            today: java.time.LocalDate
+            today: java.time.LocalDate,
+            totalPayables: Money = Money(0),
+            incomeCycleDay: Int = 1
         ): BudgetState {
             val visibleAccounts = accounts.filter { it.id !in hiddenIds }
-            val cashBalance = Money(visibleAccounts.sumOf { it.balance.minorUnits })
-            val remainingDays = today.lengthOfMonth() - today.dayOfMonth + 1
-            val budget = if (remainingDays > 0) Money(cashBalance.minorUnits / remainingDays) else Money(0)
-            return BudgetState(cashBalance, budget, remainingDays, todaySpend)
+            val cashAccounts = visibleAccounts.filter { 
+                it.type == com.projectkaka.inventory.data.local.entity.AccountType.CASH 
+            }
+            val targetAccounts = if (cashAccounts.isNotEmpty()) cashAccounts else visibleAccounts
+            val cashBalance = Money(targetAccounts.sumOf { it.balance.minorUnits })
+
+            val netAvailableMinor = cashBalance.minorUnits - totalPayables.minorUnits
+            val remainingDays = calculateDaysUntilNextIncome(today, incomeCycleDay)
+
+            val safeToSpendTotal: Money
+            val dailyBudget: Money
+            val deficitAmount: Money
+
+            if (netAvailableMinor <= 0L) {
+                safeToSpendTotal = Money(0L)
+                dailyBudget = Money(0L)
+                deficitAmount = Money(kotlin.math.abs(netAvailableMinor))
+            } else {
+                safeToSpendTotal = Money(netAvailableMinor)
+                dailyBudget = Money(netAvailableMinor / remainingDays)
+                deficitAmount = Money(0L)
+            }
+
+            return BudgetState(
+                totalCashBalance = cashBalance,
+                totalPayables = totalPayables,
+                safeToSpendTotal = safeToSpendTotal,
+                dailyBudget = dailyBudget,
+                remainingDays = remainingDays,
+                todaySpending = todaySpend,
+                deficitAmount = deficitAmount
+            )
         }
     }
 }

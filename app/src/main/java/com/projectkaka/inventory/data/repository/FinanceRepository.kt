@@ -137,6 +137,18 @@ interface FinanceRepository {
         note: String
     )
 
+    suspend fun settleDebtPartial(
+        entryId: Int,
+        accountId: Int,
+        paidAmount: Money,
+        note: String
+    ): LedgerEntryEntity?
+
+    suspend fun getDistinctContactNames(): List<String>
+    suspend fun getUnsettledEntriesForContact(contactQuery: String): List<LedgerEntryEntity>
+    suspend fun getUnsettledEntriesForExactContact(contact: String): List<LedgerEntryEntity>
+    suspend fun getTransactionsInRangeSnapshot(startMs: Long, endMs: Long): List<TransactionEntity>
+
     // ── Export ───────────────────────────────────────────────────────────
 
     suspend fun exportFinancialSnapshot(): FinancialExportData

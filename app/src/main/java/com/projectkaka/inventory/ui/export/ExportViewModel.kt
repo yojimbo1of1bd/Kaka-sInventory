@@ -17,6 +17,13 @@ import com.projectkaka.inventory.data.repository.FinancialExportData
 import com.projectkaka.inventory.data.local.ImportReader
 import com.projectkaka.inventory.data.local.RestoreResult
 
+data class MismatchDialogData(
+    val uri: android.net.Uri,
+    val reason: String,
+    val itemCount: Int,
+    val docCount: Int
+)
+
 data class ExportUiState(
     val itemCount: Int = 0,
     val documentCount: Int = 0,
@@ -27,7 +34,8 @@ data class ExportUiState(
     val availableCategories: List<String> = emptyList(),
     val working: Boolean = false,
     val error: String? = null,
-    val restoreResult: RestoreResult? = null
+    val restoreResult: RestoreResult? = null,
+    val balanceMismatchDialog: MismatchDialogData? = null
 )
 
 /**
@@ -140,11 +148,57 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun importKakaZip(uri: android.net.Uri) {
+    fun checkAndImportKakaZip(uri: android.net.Uri) {
         viewModelScope.launch {
-            _uiState.update { it.copy(working = true, error = null, restoreResult = null) }
+            _uiState.update { it.copy(working = true, error = null, restoreResult = null, balanceMismatchDialog = null) }
+            val inspection = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                ImportReader.inspectKakaZip(getApplication(), uri)
+            }
+            if (!inspection.isValid) {
+                if (inspection.itemCount > 0 || inspection.documentCount > 0) {
+                    _uiState.update {
+                        it.copy(
+                            working = false,
+                            balanceMismatchDialog = MismatchDialogData(
+                                uri = uri,
+                                reason = inspection.mismatchReason ?: "Financial verification discrepancy",
+                                itemCount = inspection.itemCount,
+                                docCount = inspection.documentCount
+                            )
+                        )
+                    }
+                    return@launch
+                }
+                _uiState.update { it.copy(working = false, error = inspection.mismatchReason ?: "Invalid backup file") }
+                return@launch
+            }
+            if (inspection.hasBalanceMismatch) {
+                _uiState.update {
+                    it.copy(
+                        working = false,
+                        balanceMismatchDialog = MismatchDialogData(
+                            uri = uri,
+                            reason = inspection.mismatchReason ?: "Balance mismatch detected in financial ledger",
+                            itemCount = inspection.itemCount,
+                            docCount = inspection.documentCount
+                        )
+                    )
+                }
+            } else {
+                importKakaZip(uri, skipFinance = false)
+            }
+        }
+    }
+
+    fun dismissMismatchDialog() {
+        _uiState.update { it.copy(balanceMismatchDialog = null) }
+    }
+
+    fun importKakaZip(uri: android.net.Uri, skipFinance: Boolean = false) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(working = true, error = null, restoreResult = null, balanceMismatchDialog = null) }
             runCatching {
-                ImportReader.restoreKakaZip(getApplication(), uri, db)
+                ImportReader.restoreKakaZip(getApplication(), uri, db, skipFinance = skipFinance)
             }.onSuccess { result ->
                 _uiState.update { it.copy(working = false, restoreResult = result) }
                 // refresh counts
@@ -152,6 +206,25 @@ class ExportViewModel(application: Application) : AndroidViewModel(application) 
                 val docCount = documentRepository.getAllDocumentsWithPagesSnapshot().size
                 _uiState.update { it.copy(itemCount = rows.size, documentCount = docCount) }
             }.onFailure { e ->
+                if (!skipFinance) {
+                    val inspection = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        ImportReader.inspectKakaZip(getApplication(), uri)
+                    }
+                    if (inspection.itemCount > 0 || inspection.documentCount > 0) {
+                        _uiState.update {
+                            it.copy(
+                                working = false,
+                                balanceMismatchDialog = MismatchDialogData(
+                                    uri = uri,
+                                    reason = e.message ?: "Financial records contain discrepancies or conflicts",
+                                    itemCount = inspection.itemCount,
+                                    docCount = inspection.documentCount
+                                )
+                            )
+                        }
+                        return@launch
+                    }
+                }
                 _uiState.update {
                     it.copy(working = false, error = e.localizedMessage ?: "Import failed")
                 }

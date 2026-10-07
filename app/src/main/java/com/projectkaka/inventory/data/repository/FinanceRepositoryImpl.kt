@@ -6,6 +6,8 @@ import com.projectkaka.inventory.data.local.dao.ContactSummaryRow
 import com.projectkaka.inventory.data.local.dao.FinanceDao
 import androidx.room.withTransaction
 import com.projectkaka.inventory.data.local.entity.AccountEntity
+import com.projectkaka.inventory.data.local.entity.AccountType
+import com.projectkaka.inventory.data.local.entity.CategoryType
 import com.projectkaka.inventory.data.local.entity.FinancialCategoryEntity
 import com.projectkaka.inventory.data.local.entity.JournalEntryEntity
 import com.projectkaka.inventory.data.local.entity.LedgerEntryEntity
@@ -42,14 +44,35 @@ class FinanceRepositoryImpl(
     override suspend fun getAllAccountsSnapshot(): List<AccountEntity> =
         withContext(ioDispatcher) { financeDao.getAllAccountsSnapshot() }
 
+    private val liquidWalletNames = setOf("bkash", "bikash", "nagad", "rocket", "upay", "cellfin", "tap")
+
     override suspend fun runInvariantCheck() =
         withContext(ioDispatcher) {
+            autoRepairLiquidWalletTypes()
             val mismatches = financeDao.getAccountsWithMismatchedBalances()
             if (mismatches.isNotEmpty()) {
                 val msg = "KAKA_INVARIANT_ERROR: Found ${mismatches.size} accounts with mismatched balances: ${mismatches.joinToString { it.name }}"
                 android.util.Log.e("KAKA_INVARIANT_ERROR", msg)
             }
         }
+
+    private suspend fun autoRepairLiquidWalletTypes() {
+        val accounts = financeDao.getAllAccountsSnapshot()
+        var updated = false
+        for (acc in accounts) {
+            val lower = acc.name.lowercase().trim()
+            val aliases = acc.aliases.lowercase().split(",").map { it.trim() }
+            val isLiquid = liquidWalletNames.contains(lower) || aliases.any { liquidWalletNames.contains(it) }
+            if (isLiquid && acc.type != AccountType.CASH) {
+                financeDao.updateAccount(acc.copy(type = AccountType.CASH))
+                financeDao.recalculateAccountBalance(acc.id)
+                updated = true
+            }
+        }
+        if (updated) {
+            syncCapitalOpeningBalance()
+        }
+    }
 
     override fun observeAllAccountBalances(): Flow<List<AccountEntity>> =
         financeDao.observeAllAccountBalances()
@@ -65,6 +88,7 @@ class FinanceRepositoryImpl(
             db.withTransaction {
                 val id = financeDao.insertAccount(account)
                 financeDao.recalculateAccountBalance(id.toInt())
+                syncCapitalOpeningBalance()
                 id
             }
         }
@@ -74,8 +98,19 @@ class FinanceRepositoryImpl(
             db.withTransaction {
                 financeDao.updateAccount(account)
                 financeDao.recalculateAccountBalance(account.id)
+                syncCapitalOpeningBalance()
             }
         }
+
+    private suspend fun syncCapitalOpeningBalance() {
+        val capitalAcc = financeDao.getAccountByName("Capital") ?: return
+        val allAccounts = financeDao.getAllAccountsSnapshot().filter { it.id != capitalAcc.id }
+        val assetsOpening = allAccounts.filter { it.type == AccountType.ASSET || it.type == AccountType.CASH }.sumOf { it.openingBalance.minorUnits }
+        val liabOpening = allAccounts.filter { it.type == AccountType.LIABILITY }.sumOf { it.openingBalance.minorUnits }
+        val netCapital = assetsOpening - liabOpening
+        financeDao.updateAccount(capitalAcc.copy(openingBalance = Money(netCapital)))
+        financeDao.recalculateAccountBalance(capitalAcc.id)
+    }
 
     override suspend fun deleteAccount(account: AccountEntity) =
         withContext(ioDispatcher) { 
@@ -115,7 +150,18 @@ class FinanceRepositoryImpl(
                     val category = financeDao.getCategoryById(transaction.categoryId!!)
                     if (category != null) {
                         financeDao.getAccountByName(category.name)?.id
-                            ?: throw IllegalStateException("No account found for category ${category.name}")
+                            ?: run {
+                                val accType = if (category.type == CategoryType.INCOME) AccountType.REVENUE else AccountType.EXPENSE
+                                val newAcc = AccountEntity(
+                                    name = category.name,
+                                    type = accType,
+                                    aliases = category.aliases,
+                                    openingBalance = Money(0L)
+                                )
+                                val id = financeDao.insertAccount(newAcc)
+                                financeDao.recalculateAccountBalance(id.toInt())
+                                id.toInt()
+                            }
                     } else null
                 } else if (transaction.counterAccountId != null) {
                     transaction.counterAccountId
@@ -322,16 +368,22 @@ class FinanceRepositoryImpl(
                     val currentBalance = financeDao.getAccountBalance(account.id) ?: Money(0L)
                     val diff = targetBalance - currentBalance
                     val newOpening = account.openingBalance + diff
-                    financeDao.updateAccount(account.copy(openingBalance = newOpening))
+                    val lower = account.name.lowercase().trim()
+                    val targetType = if (liquidWalletNames.contains(lower) && account.type != AccountType.CASH) {
+                        AccountType.CASH
+                    } else account.type
+                    financeDao.updateAccount(account.copy(openingBalance = newOpening, type = targetType))
                     financeDao.recalculateAccountBalance(account.id)
                 } else {
                     val newAccount = com.projectkaka.inventory.data.local.entity.AccountEntity(
                         name = accountAlias.replaceFirstChar { if (it.isLowerCase()) it.titlecase(java.util.Locale.getDefault()) else it.toString() },
+                        type = AccountType.CASH,
                         openingBalance = targetBalance
                     )
                     val id = financeDao.insertAccount(newAccount)
                     financeDao.recalculateAccountBalance(id.toInt())
                 }
+                syncCapitalOpeningBalance()
             }
         }
     }
@@ -339,6 +391,7 @@ class FinanceRepositoryImpl(
     override suspend fun reconcileBalances(): Int =
         withContext(ioDispatcher) {
             db.withTransaction {
+                autoRepairLiquidWalletTypes()
                 var repairedCount = 0
                 val accounts = financeDao.getAllAccountsSnapshot()
                 for (acc in accounts) {
@@ -349,6 +402,7 @@ class FinanceRepositoryImpl(
                         repairedCount++
                     }
                 }
+                syncCapitalOpeningBalance()
                 repairedCount
             }
         }
@@ -565,6 +619,106 @@ class FinanceRepositoryImpl(
 
             financeDao.updateLedgerEntry(entry.copy(isSettled = true))
         }
+    }
+
+    override suspend fun settleDebtPartial(
+        entryId: Int,
+        accountId: Int,
+        paidAmount: Money,
+        note: String
+    ): LedgerEntryEntity? = withContext(ioDispatcher) {
+        db.withTransaction {
+            val entry = financeDao.getLedgerEntryById(entryId) ?: return@withTransaction null
+            if (entry.isSettled) return@withTransaction null
+
+            if (paidAmount >= entry.amount) {
+                settleDebt(entryId, accountId, note)
+                return@withTransaction null
+            }
+
+            val isPayable = entry.type == com.projectkaka.inventory.data.local.entity.LedgerType.PAYABLE
+
+            val journalEntryId = journalDao.insertJournalEntry(
+                com.projectkaka.inventory.data.local.entity.JournalEntryEntity(
+                    timestamp = System.currentTimeMillis(),
+                    description = note,
+                    status = com.projectkaka.inventory.data.local.entity.JournalStatus.DRAFT,
+                    approvalStatus = com.projectkaka.inventory.data.local.entity.ApprovalStatus.APPROVED
+                )
+            ).toInt()
+
+            val counterAccountId = if (isPayable) {
+                financeDao.getAccountByName("Liabilities")?.id ?: throw IllegalStateException("Liabilities missing")
+            } else {
+                financeDao.getAccountByName("Assets")?.id ?: throw IllegalStateException("Assets missing")
+            }
+
+            journalDao.insertPosting(
+                com.projectkaka.inventory.data.local.entity.PostingEntity(
+                    journalEntryId = journalEntryId,
+                    accountId = accountId,
+                    amount = paidAmount,
+                    isCredit = isPayable,
+                    note = note
+                )
+            )
+
+            journalDao.insertPosting(
+                com.projectkaka.inventory.data.local.entity.PostingEntity(
+                    journalEntryId = journalEntryId,
+                    accountId = counterAccountId,
+                    amount = paidAmount,
+                    isCredit = !isPayable,
+                    note = note
+                )
+            )
+
+            journalDao.commitJournalEntry(journalEntryId)
+            financeDao.recalculateAccountBalance(accountId)
+            financeDao.recalculateAccountBalance(counterAccountId)
+
+            // Update original entry to settled for the paid amount
+            val settledEntry = entry.copy(
+                amount = paidAmount,
+                isSettled = true,
+                linkedTransactionId = journalEntryId
+            )
+            financeDao.updateLedgerEntry(settledEntry)
+
+            // Insert new open remainder entry for the unpaid balance
+            val remainderAmount = entry.amount - paidAmount
+            val remainderEntry = entry.copy(
+                id = 0,
+                amount = remainderAmount,
+                isSettled = false,
+                linkedTransactionId = null,
+                note = "${entry.note} (Remainder balance)".trim(),
+                createdAt = System.currentTimeMillis()
+            )
+            val newId = financeDao.insertLedgerEntry(remainderEntry)
+            remainderEntry.copy(id = newId.toInt())
+        }
+    }
+
+    override suspend fun getDistinctContactNames(): List<String> = withContext(ioDispatcher) {
+        financeDao.getDistinctContactNames()
+    }
+
+    override suspend fun getUnsettledEntriesForContact(contactQuery: String): List<LedgerEntryEntity> = withContext(ioDispatcher) {
+        val exact = financeDao.getUnsettledEntriesForExactContact(contactQuery.trim())
+        if (exact.isNotEmpty()) {
+            exact
+        } else {
+            financeDao.getUnsettledEntriesForContact("%" + com.projectkaka.inventory.util.SearchHelper.escapeLike(contactQuery) + "%")
+        }
+    }
+
+    override suspend fun getUnsettledEntriesForExactContact(contact: String): List<LedgerEntryEntity> = withContext(ioDispatcher) {
+        financeDao.getUnsettledEntriesForExactContact(contact.trim())
+    }
+
+    override suspend fun getTransactionsInRangeSnapshot(startMs: Long, endMs: Long): List<TransactionEntity> = withContext(ioDispatcher) {
+        financeDao.getTransactionsInRangeSnapshot(startMs, endMs)
     }
 
     // ── Export ───────────────────────────────────────────────────────────
