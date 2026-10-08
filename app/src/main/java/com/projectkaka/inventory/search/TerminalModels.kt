@@ -13,7 +13,13 @@ sealed interface TerminalCommand {
 
     data class Log(val rawFilter: String = "") : TerminalCommand
 
-    data class Snapshot(val action: String = "create") : TerminalCommand
+    data class Snapshot(val action: String = "create", val param: String = "") : TerminalCommand
+
+    data object Clear : TerminalCommand
+
+    data object CMatrix : TerminalCommand
+
+    data class Pop(val action: String = "pop") : TerminalCommand
 
     data class Init(val accountToken: String, val amount: com.projectkaka.inventory.model.Money) : TerminalCommand
     

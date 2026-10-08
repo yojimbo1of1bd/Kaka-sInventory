@@ -27,6 +27,7 @@ data class LedgerUiState(
     val filterSettled: Boolean? = false // null = all, false = unsettled, true = settled
 )
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LedgerViewModel(application: Application) : AndroidViewModel(application) {
     private val financeRepo = getApplication<KakaApplication>().financeRepository
     private val prefs = getApplication<KakaApplication>().preferences
@@ -57,6 +58,7 @@ class LedgerViewModel(application: Application) : AndroidViewModel(application) 
             financeRepo.searchLedgerEntries(q, settled, minA, maxA, minD, maxD)
         }
 
+    @Suppress("UNCHECKED_CAST")
     val uiState: StateFlow<LedgerUiState> = combine(
         searchResults,
         financeRepo.observeContactSummaries(),

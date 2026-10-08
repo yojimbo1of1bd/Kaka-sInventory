@@ -10,6 +10,7 @@ class TerminalExecutor(
     private val preferences: com.projectkaka.inventory.data.settings.UserPreferences? = null
 ) {
     private var pendingDestructiveCommand: TerminalCommand.Delete? = null
+    private var pendingSnapshotAction: String? = null
 
     suspend fun execute(input: String): TerminalResult {
         val trimmed = input.trim()
@@ -26,6 +27,30 @@ class TerminalExecutor(
             } else {
                 pendingDestructiveCommand = null
                 return TerminalResult.Failure("Command cancelled.")
+            }
+        }
+
+        // Handle pending snapshot passphrase
+        val pendingSnap = pendingSnapshotAction
+        if (pendingSnap != null) {
+            if (trimmed.equals("cancel", ignoreCase = true) || trimmed.equals("exit", ignoreCase = true)) {
+                pendingSnapshotAction = null
+                return TerminalResult.Failure("Snapshot operation cancelled.")
+            }
+            if (trimmed.startsWith("snapshot/") || trimmed.startsWith("f/") || trimmed.startsWith("clear") || trimmed == "pop" || trimmed == "pop/") {
+                pendingSnapshotAction = null
+            } else {
+                pendingSnapshotAction = null
+                val ctx = context ?: return TerminalResult.Failure("Context unavailable for snapshot.")
+                return if (pendingSnap == "take") {
+                    val pass = if (trimmed.equals("NONE", ignoreCase = true)) "" else trimmed
+                    takeSnapshotWithPassphrase(ctx, pass)
+                } else if (pendingSnap == "check") {
+                    val pass = if (trimmed.equals("NONE", ignoreCase = true)) "" else trimmed
+                    checkSnapshotWithPassphrase(ctx, pass)
+                } else {
+                    TerminalResult.Failure("Unknown pending snapshot action.")
+                }
             }
         }
         
@@ -68,6 +93,9 @@ class TerminalExecutor(
             is TerminalCommand.Cashout -> executeCashout(command)
             is TerminalCommand.Verify -> executeVerify(command)
             is TerminalCommand.Snapshot -> executeSnapshot(command)
+            is TerminalCommand.Clear -> TerminalResult.PendingAction("clear")
+            is TerminalCommand.CMatrix -> TerminalResult.PendingAction("cmatrix")
+            is TerminalCommand.Pop -> TerminalResult.PendingAction(command.action)
             is TerminalCommand.Man -> executeMan(command)
             is TerminalCommand.Log -> executeLog(command)
             is TerminalCommand.History -> executeHistory(command)
@@ -501,66 +529,111 @@ class TerminalExecutor(
     private suspend fun executeSnapshot(command: TerminalCommand.Snapshot): TerminalResult {
         val ctx = context ?: return TerminalResult.Failure("Context unavailable for snapshot.")
         return when (command.action.lowercase()) {
-            "create", "take", "make" -> {
-                val manifest = com.projectkaka.inventory.util.ImageIntegrityManager.createBaselineSnapshot(ctx)
-                val lines = mutableListOf<String>()
-                lines.add("Cryptographic Baseline Snapshot Created")
-                lines.add("• Date: ${manifest.formattedDate}")
-                lines.add("• Files: ${manifest.totalFiles} (${manifest.formatTotalSize()})")
-                lines.add("• Storage: snapshot_baseline.json & .sha256 sidecars")
-                if (manifest.entries.isNotEmpty()) {
-                    lines.add("\nFingerprints:")
-                    manifest.entries.take(8).forEachIndexed { idx, entry ->
-                        lines.add("  ${idx + 1}. ${entry.fileName} (${entry.formatSize()}) -> sha256: ${entry.sha256.take(12)}...${entry.sha256.takeLast(6)}")
-                    }
-                    if (manifest.entries.size > 8) {
-                        lines.add("  ... and ${manifest.entries.size - 8} more file(s).")
-                    }
-                }
-                TerminalResult.Success(lines.joinToString("\n"))
-            }
-            "verify", "check", "audit" -> {
-                if (!com.projectkaka.inventory.util.ImageIntegrityManager.hasBaseline(ctx)) {
-                    return TerminalResult.Failure("No cryptographic baseline snapshot found. Run 'snapshot/ create' first to establish a baseline.")
-                }
-                val res = com.projectkaka.inventory.util.ImageIntegrityManager.verifyAllImages(ctx)
-                if (res.alteredFiles.isEmpty() && res.missingFiles.isEmpty() && res.untrackedFiles.isEmpty()) {
-                    val lines = mutableListOf<String>()
-                    lines.add("Cryptographic Audit Passed (Baseline: ${res.baselineDate ?: "Active"})")
-                    lines.add("• Verified: ${res.intactCount} / ${res.totalScanned} file(s) (${res.formatTotalSize()})")
-                    lines.add("• Alterations: 0 | Missing: 0 | Untracked: 0")
-                    if (res.intactFiles.isNotEmpty()) {
-                        lines.add("\nVerified Files:")
-                        res.intactFiles.take(8).forEach { f ->
-                            lines.add("  • ${f.fileName} (${f.formatSize()}) | sha256: ${f.sha256.take(12)}... [INTACT]")
-                        }
-                        if (res.intactFiles.size > 8) {
-                            lines.add("  ... and ${res.intactFiles.size - 8} more file(s).")
-                        }
-                    }
-                    TerminalResult.Success(lines.joinToString("\n"))
+            "take", "create", "make", "new" -> {
+                if (command.param.isNotBlank()) {
+                    val pass = if (command.param.equals("NONE", ignoreCase = true)) "" else command.param
+                    takeSnapshotWithPassphrase(ctx, pass)
                 } else {
-                    val lines = mutableListOf<String>()
-                    lines.add("Integrity Alert Detected!")
-                    lines.add("• Scanned: ${res.totalScanned} | Intact: ${res.intactCount} | Altered: ${res.alteredFiles.size} | Missing: ${res.missingFiles.size} | Untracked: ${res.untrackedFiles.size}")
-                    if (res.alteredFiles.isNotEmpty()) {
-                        lines.add("\nAltered/Corrupted Files:")
-                        res.alteredFiles.forEach { f ->
-                            lines.add("  • ${f.fileName}: HASH MISMATCH! Expected ${f.expectedHash.take(10)}..., Found ${f.actualHash.take(10)}...")
-                        }
-                    }
-                    if (res.missingFiles.isNotEmpty()) {
-                        lines.add("\nMissing Files (Deleted from disk):")
-                        res.missingFiles.forEach { lines.add("  • $it") }
-                    }
-                    if (res.untrackedFiles.isNotEmpty()) {
-                        lines.add("\nUntracked Files (Not in baseline snapshot):")
-                        res.untrackedFiles.forEach { lines.add("  • $it") }
-                    }
-                    TerminalResult.Failure(lines.joinToString("\n"))
+                    pendingSnapshotAction = "take"
+                    TerminalResult.NeedsInput("Enter passphrase to seal snapshot with cryptographic salt (or type 'NONE' for unencrypted):", listOf("NONE"))
                 }
             }
-            else -> TerminalResult.Failure("Unknown snapshot action: '${command.action}'. Use 'snapshot/ create' or 'snapshot/ verify'.")
+            "check", "verify", "audit", "test" -> {
+                val latest = com.projectkaka.inventory.util.SystemIntegrityManager.getLatestSnapshot(ctx)
+                if (latest == null) {
+                    return TerminalResult.Failure("No baseline snapshot found. Run 'snapshot/ take [passphrase]' first to create a baseline.")
+                }
+                if (latest.hasPassphrase) {
+                    if (command.param.isNotBlank()) {
+                        checkSnapshotWithPassphrase(ctx, command.param)
+                    } else {
+                        pendingSnapshotAction = "check"
+                        TerminalResult.NeedsInput("Snapshot ${latest.id} is sealed with a passphrase. Enter passphrase to verify:", emptyList())
+                    }
+                } else {
+                    checkSnapshotWithPassphrase(ctx, command.param)
+                }
+            }
+            "list", "ls", "history", "all" -> {
+                val history = com.projectkaka.inventory.util.SystemIntegrityManager.getSnapshotHistory(ctx)
+                if (history.isEmpty()) {
+                    return TerminalResult.Success("No snapshots found in ledger. Create one with 'snapshot/ take [passphrase]'.")
+                }
+                val sb = StringBuilder("Whole-System Snapshot History (${history.size} recorded in secret ledger):\n")
+                history.forEachIndexed { idx, snap ->
+                    val sealBadge = if (snap.hasPassphrase) "[SEALED WITH PASSPHRASE]" else "[UNENCRYPTED]"
+                    sb.append("\n  ${idx + 1}. ${snap.id} • ${snap.formattedDate} $sealBadge\n")
+                    sb.append("     Counts: ${snap.itemCount} items, ${snap.accountCount} accs, ${snap.transactionCount} txs, ${snap.documentCount} docs, ${snap.basketCount} boxes, ${snap.fileCount} files (${snap.formatMediaSize()})\n")
+                    sb.append("     Root Hash: [PROTECTED / HIDDEN]\n")
+                }
+                sb.append("\n💡 Check current system state against baseline: 'snapshot/ check [passphrase]'\n")
+                sb.append("💡 Delete snapshot: 'snapshot/ delete <id>' or 'snapshot/ delete all'")
+                TerminalResult.Success(sb.toString())
+            }
+            "delete", "rm", "del", "remove" -> {
+                if (command.param.isBlank()) {
+                    return TerminalResult.Failure("Specify snapshot ID to delete or 'all': snapshot/ delete <id|all>")
+                }
+                val deleted = com.projectkaka.inventory.util.SystemIntegrityManager.deleteSnapshot(ctx, command.param)
+                if (deleted) {
+                    TerminalResult.Success("Deleted snapshot '${command.param}' from secret ledger.")
+                } else {
+                    TerminalResult.Failure("Snapshot '${command.param}' not found in ledger.")
+                }
+            }
+            else -> TerminalResult.Failure("Unknown snapshot action: '${command.action}'. Usage: snapshot/ <take|check|list|delete> [param]")
+        }
+    }
+
+    private fun takeSnapshotWithPassphrase(ctx: android.content.Context, passphrase: String): TerminalResult {
+        val manifest = com.projectkaka.inventory.util.SystemIntegrityManager.saveSnapshot(ctx, passphrase)
+        val sb = StringBuilder("Whole-System Cryptographic Snapshot Created\n")
+        sb.append("• ID: ${manifest.id}\n")
+        sb.append("• Timestamp: ${manifest.formattedDate}\n")
+        sb.append("• Protection: ${if (manifest.hasPassphrase) "Sealed with user passphrase" else "Unsalted / Open"}\n")
+        sb.append("• Merkle State Tree Branches Hashed:\n")
+        sb.append("   - Inventory: ${manifest.itemCount} items\n")
+        sb.append("   - Finance: ${manifest.accountCount} accounts, ${manifest.transactionCount} transactions\n")
+        sb.append("   - Documents: ${manifest.documentCount} documents\n")
+        sb.append("   - Boxes/Cartons: ${manifest.basketCount} baskets\n")
+        sb.append("   - Media Files: ${manifest.fileCount} files (${manifest.formatMediaSize()})\n")
+        sb.append("• Root Hash: [PROTECTED / HIDDEN]\n")
+        sb.append("• Storage: snapshots_history.json & active baseline")
+        return TerminalResult.Success(sb.toString())
+    }
+
+    private fun checkSnapshotWithPassphrase(ctx: android.content.Context, passphrase: String): TerminalResult {
+        val res = com.projectkaka.inventory.util.SystemIntegrityManager.auditAgainstLatest(ctx, passphrase)
+        if (res.passphraseMismatch) {
+            return TerminalResult.Failure("Passphrase mismatch! Cryptographic seal verification failed. Passphrase does not match snapshot baseline.")
+        }
+        if (res.errorReason != null) {
+            return TerminalResult.Failure(res.errorReason)
+        }
+
+        val sb = StringBuilder()
+        if (res.isPassed) {
+            sb.append("✓ Whole-System Cryptographic Audit Passed!\n")
+            sb.append("• Baseline: ${res.baselineId} (${res.baselineDate})\n")
+            sb.append("• Merkle Branches Verified:\n")
+            res.branchAudits.forEach { branch ->
+                sb.append("   - ${branch.name}: [INTACT] (${branch.countDescription})\n")
+            }
+            sb.append("• Root Hash: [PROTECTED / HIDDEN]\n")
+            sb.append("Zero alterations detected across all database records and media files.")
+            return TerminalResult.Success(sb.toString())
+        } else {
+            sb.append("✗ Whole-System Integrity Alert Detected!\n")
+            sb.append("• Baseline: ${res.baselineId} (${res.baselineDate})\n")
+            sb.append("• Merkle Branches Audit:\n")
+            res.branchAudits.forEach { branch ->
+                val status = if (branch.isIntact) "[INTACT]" else "[ALTERED]"
+                val note = if (branch.diffNote != null) " - ${branch.diffNote}" else " (${branch.countDescription})"
+                sb.append("   - ${branch.name}: $status$note\n")
+            }
+            sb.append("• Root Hash: [PROTECTED / HIDDEN]\n")
+            sb.append("Discrepancies found! System state has been modified since snapshot baseline.")
+            return TerminalResult.Failure(sb.toString())
         }
     }
     

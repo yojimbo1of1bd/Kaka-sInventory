@@ -22,6 +22,12 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.os.Build
+import android.provider.Settings
+import com.projectkaka.inventory.ui.settings.FloatingTerminalService
+import com.projectkaka.inventory.ui.settings.LogType
+import com.projectkaka.inventory.ui.settings.TerminalLog
+import com.projectkaka.inventory.ui.settings.TerminalSessionManager
 import android.widget.Toast
 
 class MainActivity : FragmentActivity() {
@@ -97,6 +103,16 @@ class MainActivity : FragmentActivity() {
             }
         }
         lastStopMillis = 0L
+
+        // Auto-launch floating terminal if user just granted overlay permission in Settings
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
+            if (TerminalSessionManager.consumePendingPopLaunch()) {
+                FloatingTerminalService.start(this)
+                TerminalSessionManager.appendLog(
+                    TerminalLog("✓ 'Display over other apps' granted! Floating terminal launched.", LogType.SUCCESS)
+                )
+            }
+        }
 
         // Startup self-check: verify Phase 1 invariant for account balances
         lifecycleScope.launch(Dispatchers.IO) {

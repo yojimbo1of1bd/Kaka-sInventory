@@ -22,6 +22,9 @@ object TerminalManPages {
             "report" -> manReport()
             "init" -> manInit()
             "account", "alter" -> manAccount()
+            "clear" -> manClear()
+            "cmatrix", "matrix" -> manCMatrix()
+            "pop", "push" -> manPop()
             "history" -> manHistory()
             "verify" -> manVerify()
             else -> generalIndex(topic)
@@ -222,38 +225,111 @@ SEE ALSO
 ================================================================================
 """.trimIndent()
 
+    private fun manClear(): String = """
+================================================================================
+PROJECT KAKA MANUAL                                                       CLEAR(1)
+================================================================================
+
+NAME
+    clear/ - Clear all terminal output history and reset view
+
+SYNOPSIS
+    clear/  (alias: clear)
+
+DESCRIPTION
+    Wipes the active terminal console output buffer, removing all previous command
+    echoes, calculation lines, and audit summaries.
+
+SEE ALSO
+    man history/, man ?
+================================================================================
+""".trimIndent()
+
+    private fun manCMatrix(): String = """
+================================================================================
+PROJECT KAKA MANUAL                                                     CMATRIX(1)
+================================================================================
+
+NAME
+    cmatrix/ - Terminal falling neon digital rain screensaver
+
+SYNOPSIS
+    cmatrix/  (aliases: cmatrix, matrix/, matrix)
+
+DESCRIPTION
+    Launches a full-screen Matrix screensaver displaying cascading neon glyphs,
+    alphanumerics, and currency symbols against a deep black void.
+    Tap anywhere on the screen to dismiss and return to the terminal.
+
+SEE ALSO
+    man clear/, man snapshot/
+================================================================================
+""".trimIndent()
+
+    private fun manPop(): String = """
+================================================================================
+PROJECT KAKA MANUAL                                                         POP(1)
+================================================================================
+
+NAME
+    pop/ - Detach terminal into a floating, hovering draggable overlay window
+
+SYNOPSIS
+    pop/   (alias: pop)  - Detaches terminal into a floating window
+    push/  (alias: push) - Docks floating terminal back to full screen
+
+DESCRIPTION
+    pop/ minimizes the terminal into a hovering draggable overlay pill/window that
+    persists across all screens of Project Kaka. Allows executing commands while
+    navigating inventory items, boxes, or financial reports.
+    push/ (or tapping the Terminal icon from Home) docks the terminal back.
+
+SEE ALSO
+    man kaka/, man clear/
+================================================================================
+""".trimIndent()
+
     private fun manSnapshot(): String = """
 ================================================================================
 PROJECT KAKA MANUAL                                                  SNAPSHOT(1)
 ================================================================================
 
 NAME
-    snapshot/ - Create and verify cryptographic SHA-256 integrity snapshots
+    snapshot/ - Hierarchical Merkle Tree whole-system cryptographic integrity engine
 
 SYNOPSIS
-    snapshot/ [create | verify]
+    snapshot/ <take|check|list|delete> [passphrase|id]
 
 DESCRIPTION
-    Maintains an authoritative cryptographic baseline snapshot of all stored
-    item photos and document scans. Uses memory-safe buffered streaming
-    (64KB chunks) to hash arbitrarily large files (including 100MB+) with
-    zero memory pressure.
+    Builds and audits a deterministic 5-branch Merkle state tree covering the
+    entire system:
+    1. Inventory Branch (items table: ID, status, values, categories, links)
+    2. Finance Branch (accounts, journal entries, postings, ledger dues)
+    3. Documents Branch (documents, document pages)
+    4. Boxes/Cartons Branch (baskets, carton cross-references)
+    5. Media Files Branch (streaming 64KB O(1) RAM SHA-256 hashes of on-disk photos)
 
 COMMANDS
-    snapshot/ create  (alias: snapshot/ take)
-        Computes hardware-accelerated SHA-256 hashes for all on-disk media,
-        generates sidecars, and writes the signed 'snapshot_baseline.json'
-        manifest. Returns exact file counts, sizes, and fingerprints.
+    snapshot/ take [passphrase]   (alias: snapshot/ create)
+        Constructs a complete Merkle state tree, salts with user passphrase, and
+        appends the snapshot to the protected secret ledger (snapshots_history.json).
+        If no passphrase is typed, you will be prompted for one.
 
-    snapshot/ verify  (alias: snapshot/ check)
-        Audits current files on disk against 'snapshot_baseline.json'.
-        Reports intact files with their SHA-256 fingerprints, and flags:
-        • Altered/tampered files (hash mismatch)
-        • Missing files (deleted from disk)
-        • Untracked files (added without being in baseline)
+    snapshot/ check [passphrase]  (alias: snapshot/ verify)
+        Computes a live Merkle tree snapshot right now and audits against the
+        latest snapshot baseline. Pinpoints exact branches altered if any records
+        or files were modified, restored, or deleted.
+
+    snapshot/ list
+        Lists all snapshots in history with timestamps, protection status, and
+        entity counts. Raw 64-character SHA-256 strings are kept PROTECTED and hidden.
+
+    snapshot/ delete <id | all>
+        Deletes a specific snapshot by ID (e.g. 'snapshot/ delete SNAP-123456')
+        or clears all history ('snapshot/ delete all').
 
 SEE ALSO
-    man verify/
+    man verify/, man log/, man ?
 ================================================================================
 """.trimIndent()
 

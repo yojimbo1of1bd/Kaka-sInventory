@@ -80,11 +80,14 @@ fun AliasGuideScreen(
     onOpenSettings: () -> Unit,
     onOpenAccounts: () -> Unit,
     onOpenStatements: () -> Unit,
+    onPopTerminal: (() -> Unit)? = null,
+    onPushTerminal: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     viewModel: AliasGuideViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showManual by remember { mutableStateOf(false) }
+    var showMatrix by remember { mutableStateOf(false) }
     var terminalInput by remember { mutableStateOf("") }
     var historyIndex by remember { androidx.compose.runtime.mutableIntStateOf(-1) }
     val terminalLogs = state.terminalLogs
@@ -106,6 +109,9 @@ fun AliasGuideScreen(
         viewModel.executeTerminalCommand(trimmed) { action ->
             when (action) {
                 "alias" -> showManual = true
+                "cmatrix" -> showMatrix = true
+                "pop" -> onPopTerminal?.invoke()
+                "push" -> onPushTerminal?.invoke()
                 "graph" -> onOpenGraph()
                 "ledger" -> onOpenLedger()
                 "export" -> onOpenExport()
@@ -117,7 +123,10 @@ fun AliasGuideScreen(
         terminalInput = ""
     }
 
-    Scaffold(
+    if (showMatrix) {
+        MatrixScreensaver(onDismiss = { showMatrix = false })
+    } else {
+        Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
@@ -445,8 +454,14 @@ fun AliasGuideScreen(
                         CommandRow("account/ archive bkash", "Archive an account without losing history")
                         CommandRow("alter/ bkash type cash", "Change account classification")
                         CommandRow("alter/ bkash rename bKash Mobile", "Rename account")
-                        CommandRow("snapshot/ create", "Create SHA-256 cryptographic baseline snapshot (alias: snapshot/ take)")
-                        CommandRow("snapshot/ verify", "Verify all images against baseline checksums (alias: snapshot/ check)")
+                        CommandRow("clear/", "Clear terminal output history and reset screen")
+                        CommandRow("cmatrix/", "Full-screen Matrix falling digital rain screensaver")
+                        CommandRow("pop/", "Pop out terminal into hovering draggable window")
+                        CommandRow("push/", "Dock floating terminal back into full screen")
+                        CommandRow("snapshot/ take [pass]", "Whole-system Merkle tree snapshot with passphrase")
+                        CommandRow("snapshot/ check [pass]", "Live audit against latest baseline (pinpoints alterations)")
+                        CommandRow("snapshot/ list", "List snapshot history ledger (root hash protected)")
+                        CommandRow("snapshot/ delete <id>", "Delete historical snapshots from ledger")
                         CommandRow("history/ 20", "View recent terminal command history")
 
                         Spacer(Modifier.height(16.dp))
@@ -497,6 +512,7 @@ fun AliasGuideScreen(
                 }
             }
         }
+    }
     }
 }
 

@@ -22,6 +22,7 @@ data class ItemDetailUiState(
     val loading: Boolean = true
 )
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ItemDetailViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = getApplication<KakaApplication>().repository

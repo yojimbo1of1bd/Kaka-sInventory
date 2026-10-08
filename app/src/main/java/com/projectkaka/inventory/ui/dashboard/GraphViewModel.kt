@@ -113,6 +113,7 @@ class GraphViewModel(application: Application) : AndroidViewModel(application) {
         FilterState(bucket, selAcc, selCat, mode, selBucketIdx)
     }
 
+    @Suppress("UNCHECKED_CAST")
     val uiState: StateFlow<GraphUiState> = combine(
         filterState,
         financeRepo.getAllTransactions(),

@@ -16,6 +16,10 @@ object TerminalParser {
         if (trimmed.startsWith("kaka search ", ignoreCase = true)) return TerminalCommand.KakaAction("search", trimmed.substring(12).trim())
         
         if (trimmed.equals("/help", ignoreCase = true) || trimmed.equals("help", ignoreCase = true)) return TerminalCommand.Help
+        if (trimmed.equals("clear", ignoreCase = true) || trimmed.equals("clear/", ignoreCase = true)) return TerminalCommand.Clear
+        if (trimmed.equals("cmatrix", ignoreCase = true) || trimmed.equals("cmatrix/", ignoreCase = true) || trimmed.equals("matrix", ignoreCase = true) || trimmed.equals("matrix/", ignoreCase = true)) return TerminalCommand.CMatrix
+        if (trimmed.equals("pop", ignoreCase = true) || trimmed.equals("pop/", ignoreCase = true)) return TerminalCommand.Pop("pop")
+        if (trimmed.equals("push", ignoreCase = true) || trimmed.equals("push/", ignoreCase = true)) return TerminalCommand.Pop("push")
 
         // Slash normalization: if a slash directly touches the next token without space (e.g. settle/"babul mama" or f/-120), insert space
         val slashNormalized = Regex("^([a-zA-Z0-9]+)/([^\\s].*)$").replace(trimmed) { match ->
@@ -43,6 +47,10 @@ object TerminalParser {
             "help/" -> TerminalCommand.Man(args.joinToString(" ").ifBlank { "?" })
             "log/" -> TerminalCommand.Log(args.joinToString(" ").trim())
             "snapshot/" -> parseSnapshot(args)
+            "clear/", "clear" -> TerminalCommand.Clear
+            "cmatrix/", "cmatrix", "matrix/", "matrix" -> TerminalCommand.CMatrix
+            "pop/", "pop" -> TerminalCommand.Pop("pop")
+            "push/", "push" -> TerminalCommand.Pop("push")
             "init/" -> parseInit(args)
             "xfer/", "accrue/", "realize/" -> parseTransfer(args)
             "cashout/" -> parseCashout(args)
@@ -100,8 +108,30 @@ object TerminalParser {
     }
 
     private fun parseSnapshot(args: List<String>): TerminalCommand {
-        val action = args.firstOrNull()?.lowercase() ?: "create"
-        return TerminalCommand.Snapshot(action)
+        if (args.isEmpty()) {
+            return TerminalCommand.Snapshot(action = "take", param = "")
+        }
+        val first = args[0].lowercase()
+        return when (first) {
+            "take", "create", "make", "new" -> {
+                val param = args.drop(1).joinToString(" ").trim()
+                TerminalCommand.Snapshot(action = first, param = param)
+            }
+            "check", "verify", "audit", "test" -> {
+                val param = args.drop(1).joinToString(" ").trim()
+                TerminalCommand.Snapshot(action = first, param = param)
+            }
+            "list", "ls", "history", "all" -> {
+                TerminalCommand.Snapshot(action = first, param = "")
+            }
+            "delete", "rm", "del", "remove" -> {
+                val param = args.drop(1).joinToString(" ").trim()
+                TerminalCommand.Snapshot(action = first, param = param)
+            }
+            else -> {
+                TerminalCommand.Snapshot(action = "take", param = args.joinToString(" ").trim())
+            }
+        }
     }
 
     private fun parseInit(args: List<String>): TerminalCommand {

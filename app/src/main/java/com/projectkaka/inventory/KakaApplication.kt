@@ -15,6 +15,11 @@ import kotlinx.coroutines.Dispatchers
  */
 class KakaApplication : Application() {
 
+    override fun onCreate() {
+        super.onCreate()
+        com.projectkaka.inventory.ui.settings.TerminalSessionManager.init(this)
+    }
+
     val database: AppDatabase by lazy { AppDatabase.getInstance(this) }
 
     val preferences: UserPreferences by lazy { UserPreferences(this) }

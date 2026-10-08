@@ -2,12 +2,17 @@ package com.projectkaka.inventory.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import com.projectkaka.inventory.ui.settings.FloatingTerminalOverlay
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -88,8 +93,13 @@ fun KakaApp() {
     // The theme reads the persisted flag, so an appearance change repaints the whole tree
     // instantly and survives process death.
     KakaTheme(darkTheme = isDark) {
+        val context = LocalContext.current
         val navController = rememberNavController()
-        NavHost(navController = navController, startDestination = Routes.SPLASH) {
+        val isPoppedOut by com.projectkaka.inventory.ui.settings.TerminalSessionManager.isPoppedOut.collectAsState()
+        val isSystemOverlayActive by com.projectkaka.inventory.ui.settings.TerminalSessionManager.isSystemOverlayActive.collectAsState()
+
+        Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
+            NavHost(navController = navController, startDestination = Routes.SPLASH) {
 
             composable(Routes.SPLASH) {
                 SplashScreen(
@@ -112,7 +122,12 @@ fun KakaApp() {
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     onOpenItem = { itemId -> navController.navigate(Routes.itemDetail(itemId)) },
                     onOpenGraph = { navController.navigate(Routes.GRAPH) },
-                    onOpenAlias = { navController.navigate(Routes.ALIAS) },
+                    onOpenAlias = {
+                        if (isPoppedOut || isSystemOverlayActive) {
+                            com.projectkaka.inventory.ui.settings.TerminalSessionManager.dockTerminal(context, bringActivityToFront = false)
+                        }
+                        navController.navigate(Routes.ALIAS)
+                    },
                     onOpenLedger = { navController.navigate(Routes.LEDGER) },
                     onOpenStatements = { navController.navigate(Routes.STATEMENTS) },
                     onOpenDocumentCapture = { navController.navigate(Routes.DOCUMENT_CAPTURE) },
@@ -234,7 +249,14 @@ fun KakaApp() {
                     onOpenExport = { navController.navigate(Routes.EXPORT) },
                     onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     onOpenAccounts = { navController.navigate(Routes.ACCOUNTS_MANAGER) },
-                    onOpenStatements = { navController.navigate(Routes.STATEMENTS) }
+                    onOpenStatements = { navController.navigate(Routes.STATEMENTS) },
+                    onPopTerminal = {
+                        com.projectkaka.inventory.ui.settings.TerminalSessionManager.popTerminal(context)
+                        navController.popBackStack()
+                    },
+                    onPushTerminal = {
+                        com.projectkaka.inventory.ui.settings.TerminalSessionManager.dockTerminal(context, bringActivityToFront = false)
+                    }
                 )
             }
 
@@ -285,5 +307,21 @@ fun KakaApp() {
                 )
             }
         }
+
+        if (isPoppedOut && !isSystemOverlayActive) {
+            FloatingTerminalOverlay(
+                onPush = {
+                    com.projectkaka.inventory.ui.settings.TerminalSessionManager.dockTerminal(context, bringActivityToFront = false)
+                    navController.navigate(Routes.ALIAS)
+                },
+                onOpenGraph = { navController.navigate(Routes.GRAPH) },
+                onOpenLedger = { navController.navigate(Routes.LEDGER) },
+                onOpenExport = { navController.navigate(Routes.EXPORT) },
+                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                onOpenAccounts = { navController.navigate(Routes.ACCOUNTS_MANAGER) },
+                onOpenStatements = { navController.navigate(Routes.STATEMENTS) }
+            )
+        }
     }
+}
 }

@@ -172,6 +172,7 @@ fun ItemDetailScreen(
     }
 }
 
+@Suppress("DEPRECATION")
 @Composable
 private fun DetailContent(
     item: ItemEntity,
